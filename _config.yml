@@ -10,4 +10,7 @@ github_username:  mogasergiu
 # Build settings
 # theme: minima
 
-theme: minima
+theme: jekyll-theme-hacker
+
+plugins:
+  - jekyll-feed

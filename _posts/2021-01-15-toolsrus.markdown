@@ -8,6 +8,8 @@ categories: tryhackme
 ## Nmap Scan ##
 
 As always, we begin with our usual Nmap scan.
+```sudo nmap -sSCV -T5 10.10.45.103 -p- -oN=nmapScan -vv```
+
 ```
 Nmap scan report for 10.10.45.103
 Host is up, received echo-reply ttl 63 (0.056s latency).

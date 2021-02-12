@@ -1,6 +1,6 @@
 - name: Home
-  link: /
+  url: /
 - name: About
-  link: about/index.html
+  url: about/index.html
 - name: TryHackMe
-  line: tryhackme/2021/
+  url: tryhackme/index.html

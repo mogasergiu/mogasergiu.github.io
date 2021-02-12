@@ -1,5 +1,5 @@
 ---
 layout: default
 title: About
-permalink: /about/
+permalink: /about/index.html
 ---

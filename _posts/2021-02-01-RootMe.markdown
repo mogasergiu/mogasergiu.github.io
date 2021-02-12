@@ -85,12 +85,12 @@ by OJ Reeves (@TheColonial) & Christian Mehlmauer (@_FireFart_)
 ```
 ## File Upload ##
 Trying to simply upload Kali's already existing ```/usr/share/webshells/php/php-reverse-shell.php``` will yield us an error:
-![No PHP allowed img](./assets/images/RootMe/NoPHP.png)
+![No PHP allowed img](/assets/images/RootMe/NoPHP.png)
 Trying out to rename the file with a ```jpeg``` extension however, will allow us to upload the reverse shell to the remote server:
 ```
 mv php-reverse-shell.php php-reverse-shell.php.jpeg
 ```
-![JPEG allowed img](./assets/images/RootMe/JPEGYes.png)
+![JPEG allowed img](/assets/images/RootMe/JPEGYes.png)
 Accessing the file through the ```uploads``` directory discovered in the previous we encounter an error, due to the server not knowing how to execute this file:
 ```
 The image “http://10.10.80.111/uploads/php-reverse-shell.php.jpeg” cannot be displayed because it contains errors.

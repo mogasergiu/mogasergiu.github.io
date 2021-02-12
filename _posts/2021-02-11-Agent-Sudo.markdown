@@ -240,7 +240,7 @@ $ scp james@10.10.144.178:/home/james/Alien_autospy.jpg .
 james@10.10.144.178's password: 
 Alien_autospy.jpg                                                                100%   41KB 101.5KB/s   00:00  
 ```
-![Alien image](./assets/images/Agent-Sudo/Alien_autospy.png)
+![Alien image](/assets/images/Agent-Sudo/Alien_autospy.png)
 Doing a reverse image search on this we obtain the name of the incident.
 
 ## Privilege escalation ##

@@ -4,3 +4,5 @@
   url: about/index.html
 - name: TryHackMe
   url: tryhackme/index.html
+- name: OverTheWire
+  url: overthewire/index.html

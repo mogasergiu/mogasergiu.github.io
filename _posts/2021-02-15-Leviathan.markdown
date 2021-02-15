@@ -5,7 +5,7 @@ date:   2021-02-15 14:57:56 +0200
 categories: overthewire
 ---
 
-### Level 0 -> 1 ###
+## Level 0 -> 1 ##
 The password can be found inside the ```HTML``` file inside the ```.backup``` directory:
 ```
 leviathan0@leviathan:~$ ls -al
@@ -21,7 +21,7 @@ bookmarks.html
 leviathan0@leviathan:~$ cat .backup/bookmarks.html | grep "pass"
 ```
 
-### Level 1 -> 2 ###
+## Level 1 -> 2 ##
 We are presented with a binary with its ```SUID``` flag set:
 ```
 leviathan1@leviathan:~$ ls -l
@@ -65,7 +65,7 @@ leviathan2
 $ cat /etc/leviathan_pass/leviathan2        
 ```
 
-### Level 2 -> 3 ###
+## Level 2 -> 3 ##
 Again, we are presented with a binary that seems to be able to print files and has its ```SUID``` set for user ```leviathan3```, however it can't be that easy... can it?
 ```
 leviathan2@leviathan:~$ ls -la
@@ -141,7 +141,7 @@ leviathan2@leviathan:/tmp$ touch /tmp/hi\ leviathan3
 leviathan2@leviathan:/etc/leviathan_pass$ ~/printfile /tmp/hi\ leviathan3
 ```
 
-### Level 3 -> 4
+## Level 3 -> 4
 Another challenge, another binary! Let's check it out!
 ```
 leviathan3@leviathan:~$ ls -la
@@ -176,7 +176,7 @@ leviathan4
 $ cat /etc/leviathan_pass/leviathan4
 ```
 
-### Level 4 -> 5 ###
+## Level 4 -> 5 ##
 This was a very trivial challenge.
 ```
 total 24
@@ -192,7 +192,7 @@ leviathan4@leviathan:~$ .trash/bin
 ```
 This prints some characters' binary encoding. Just throw them in a binary to ASCII converter and you get your flag :).
 
-### Level 5 -> 6 ###
+## Level 5 -> 6 ##
 This challenge is also easier than the previous ones. We are given a binary that seems to want to print the contents of a file ```/tmp/file.log``` after which it gets deleted:
 ```
 eviathan5@leviathan:~$ ls -la
@@ -219,7 +219,7 @@ leviathan5@leviathan:~$ ./leviathan5
 ```
 And this is how we get our flag.
 
-### Level 6 -> 7
+## Level 6 -> 7
 This time we have a binary that converts 4 character strings to integers:
 ```
 leviathan6@leviathan:~$ ls
@@ -253,7 +253,7 @@ leviathan7
 $ cat /etc/leviathan_pass/leviathan7
 ```
 
-### Level 7 ###
+## Level 7 ##
 Welp, looks like we are done! :)
 ```
 leviathan7@leviathan:~$ ls

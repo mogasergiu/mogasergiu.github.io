@@ -1,0 +1,322 @@
+---
+layout: post
+title:  "OverTheWire: Krypton"
+date:   2021-03-05 22:07:56 +0200
+categories: overthewire
+---
+
+Generally, I am not really into Cryptography or Web Exploitation. I am more of a systems type of person: I enjoy learning about the Kernel, Operating Systems, Networking or Compilers.
+Nevertheless, today I decided to try an easy set of challenges that focus on cryptography and cryptanalysis, namely ```Krypton```, offered by the ```OverTheWire``` community.
+
+For most of these challenges I will be using [CyberChef](https://gchq.github.io/CyberChef/) as my main go to tool. I expect a decent fight!
+
+## Level 0 ##
+```
+Welcome to Krypton! The first level is easy. The following string encodes the password using Base64:
+
+S1JZUFRPTklTR1JFQVQ=
+
+Use this password to log in to krypton.labs.overthewire.org with username krypton1 using SSH on port 2231. You can find the files for other levels in /krypton/
+```
+Alright, since this string ends with ```=```, I am pretty sure it is encoded in base64.
+
+Aaaand, indeed it is, as decoding this string gives us the password
+
+```
+KRYPTONISGREAT
+```
+
+## Level 1 ##
+
+```
+The password for level 2 is in the file ‘krypton2’. It is ‘encrypted’ using a simple rotation. It is also in non-standard ciphertext format. When using alpha characters for cipher text it is normal to group the letters into 5 letter clusters, regardless of word boundaries. This helps obfuscate any patterns. This file has kept the plain text word boundaries and carried them to the cipher text. Enjoy!
+```
+
+The ```README``` on the server reads as such
+```
+The first level is easy.  The password for level 2 is in the file
+'krypton2'.  It is 'encrypted' using a simple rotation called ROT13.
+It is also in non-standard ciphertext format.  When using alpha characters for
+cipher text it is normal to group the letters into 5 letter clusters,
+regardless of word boundaries.  This helps obfuscate any patterns.
+
+This file has kept the plain text word boundaries and carried them to
+the cipher text.
+
+Enjoy!
+```
+
+The file contents:
+```
+krypton1@krypton:/krypton$ cat krypton1/krypton2
+YRIRY GJB CNFFJBEQ EBGGRA
+```
+ Using the ```ROT13``` decoding feature we obtain the string
+```
+LEVEL TWO PASSWORD ROTTEN
+```
+
+This Cipher is known to shift every digit to an offset of 13.
+
+## Level 2 ##
+```
+The password for level 3 is in the file krypton3. It is in 5 letter group ciphertext. It is encrypted with a Caesar Cipher. Without any further information, this cipher text may be difficult to break. You do not have direct access to the key, however you do have access to a program that will encrypt anything you wish to give it using the key. If you think logically, this is completely easy.
+```
+```
+krypton2@krypton:~$ cat /krypton/krypton2/krypton3
+OMQEMDUEQMEK
+```
+Alright, so what we are being told is that ```ROT13``` is a special case of ```Caesar Cipher``` with shift of 13. So what we need to do now is bruteforce the shift.
+After some tries, it turns out the shift was 14, heh.
+
+```
+CAESARISEASY
+```
+
+## Level 3 ##
+```
+Well done. You’ve moved past an easy substitution cipher.
+
+The main weakness of a simple substitution cipher is repeated use of a simple key. In the previous exercise you were able to introduce arbitrary plaintext to expose the key. In this example, the cipher mechanism is not available to you, the attacker.
+
+However, you have been lucky. You have intercepted more than one message. The password to the next level is found in the file ‘krypton4’. You have also found 3 other files. (found1, found2, found3)
+
+You know the following important details:
+
+    The message plaintexts are in English (*** very important) - They were produced from the same key (*** even better!)
+
+Enjoy.
+```
+```
+krypton3@krypton:~$ cd /krypton/krypton3/
+krypton3@krypton:/krypton/krypton3$ ls
+HINT1  HINT2  README  found1  found2  found3  krypton4
+krypton3@krypton:/krypton/krypton3$ cat krypton4 
+KSVVW BGSJD SVSIS VXBMN YQUUK BNWCU ANMJS
+```
+
+The ```important details``` that we are given, especially the english one. hints towards frequency analysis, that is looking for the most common letters in the English dictionary and comparing it to the most frequent letter in the given words and find the rule by which they have been encoded.
+
+Alright, so let's do a frequency analysis on the found files.
+```
+krypton3@krypton:/krypton/krypton3$ cat found1
+CGZNL YJBEN QYDLQ ZQSUQ NZCYD SNQVU BFGBK GQUQZ QSUQN UZCYD SNJDS UDCXJ ZCYDS NZQSU QNUZB WSBNZ QSUQN UDCXJ CUBGS BXJDS UCTYV SUJQG WTBUJ KCWSV LFGBK GSGZN LYJCB GJSZD GCHMS UCJCU QJLYS BXUMA UJCJM JCBGZ CYDSN CGKDC ZDSQZ DVSJJ SNCGJ DSYVQ CGJSO JCUNS YVQZS WALQV SJJSN UBTSX COSWG MTASN BXYBU CJCBG UWBKG JDSQV YDQAS JXBNS OQTYV SKCJD QUDCX JBXQK BMVWA SNSYV QZSWA LWAKB MVWAS ZBTSS QGWUB BGJDS TSJDB WCUGQ TSWQX JSNRM VCMUZ QSUQN KDBMU SWCJJ BZBTT MGCZQ JSKCJ DDCUE SGSNQ VUJDS SGZNL YJCBG UJSYY
+SNXBN TSWAL QZQSU QNZCY DSNCU BXJSG CGZBN YBNQJ SWQUY QNJBX TBNSZ BTYVS OUZDS TSUUM ZDQUJ DSICE SGNSZ CYDSN QGWUJ CVVDQ UTBWS NGQYY VCZQJ CBGCG JDSNB JULUJ STQUK CJDQV VUCGE VSQVY DQASJ UMAUJ CJMJC BGZCY DSNUJ DSZQS UQNZC YDSNC USQUC VLANB FSGQG WCGYN QZJCZ SBXXS NUSUU SGJCQ VVLGB ZBTTM GCZQJ CBGUS ZMNCJ LUDQF SUYSQ NSYNB WMZSW TBUJB XDCUF GBKGK BNFAS JKSSG QGWDC USQNV LYVQL UKSNS TQCGV LZBTS WCSUQ GWDCU JBNCS UESGN SUDSN QCUSW JBJDS YSQFB XUBYD CUJCZ QJCBG QGWQN JCUJN LALJD SSGWB XJDSU COJSS
+GJDZS GJMNL GSOJD SKNBJ STQCG VLJNQ ESWCS UMGJC VQABM JCGZV MWCGE DQTVS JFCGE VSQNQ GWTQZ ASJDZ BGUCW SNSWU BTSBX JDSXC GSUJS OQTYV SUCGJ DSSGE VCUDV QGEMQ ESCGD CUVQU JYDQU SDSKN BJSJN QECZB TSWCS UQVUB FGBKG QUNBT QGZSU QGWZB VVQAB NQJSW KCJDB JDSNY VQLKN CEDJU TQGLB XDCUY VQLUK SNSYM AVCUD SWCGS WCJCB GUBXI QNLCG EHMQV CJLQG WQZZM NQZLW MNCGE DCUVC XSJCT SQGWC GJKBB XDCUX BNTSN JDSQJ NCZQV ZBVVS QEMSU YMAVC UDSWJ DSXCN UJXBV CBQZB VVSZJ SWSWC JCBGB XDCUW NQTQJ CZKBN FUJDQ JCGZV MWSWQ VVAMJ
+JKBBX JDSYV QLUGB KNSZB EGCUS WQUUD QFSUY SQNSU
+```
+```
+krypton3@krypton:/krypton/krypton3$ cat found2
+QVJDB MEDGB QJJSG WQGZS NSZBN WUXBN JDSYS NCBWU MNICI STBUJ ACBEN QYDSN UQENS SJDQJ UDQFS UYSQN SKQUS WMZQJ SWQJJ DSFCG EUGSK UZDBB VCGUJ NQJXB NWQXN SSUZD BBVZD QNJSN SWCGQ ABMJQ HMQNJ SNBXQ TCVSX NBTDC UDBTS ENQTT QNUZD BBVUI QNCSW CGHMQ VCJLW MNCGE JDSSV CPQAS JDQGS NQAMJ JDSZM NNCZM VMTKQ UWCZJ QJSWA LVQKJ DNBME DBMJS GEVQG WQGWJ DSUZD BBVKB MVWDQ ISYNB ICWSW QGCGJ SGUCI SSWMZ QJCBG CGVQJ CGENQ TTQNQ GWJDS ZVQUU CZUQJ JDSQE SBXUD QFSUY SQNST QNNCS WJDSL SQNBV WQGGS DQJDQ KQLJD SZBGU CUJBN
+LZBMN JBXJD SWCBZ SUSBX KBNZS UJSNC UUMSW QTQNN CQESV CZSGZ SBGGB ISTAS NJKBB XDQJD QKQLU GSCED ABMNU YBUJS WABGW UJDSG SOJWQ LQUUM NSJLJ DQJJD SNSKS NSGBC TYSWC TSGJU JBJDS TQNNC QESJD SZBMY VSTQL DQISQ NNQGE SWJDS ZSNST BGLCG UBTSD QUJSU CGZSJ DSKBN ZSUJS NZDQG ZSVVB NQVVB KSWJD STQNN CQESA QGGUJ BASNS QWBGZ SCGUJ SQWBX JDSMU MQVJD NSSJC TSUQG GSUYN SEGQG ZLZBM VWDQI SASSG JDSNS QUBGX BNJDC UUCOT BGJDU QXJSN JDSTQ NNCQE SUDSE QISAC NJDJB QWQME DJSNU MUQGG QKDBK QUAQY JCUSW BGTQL JKCGU UBGDQ
+TGSJQ GWWQM EDJSN RMWCJ DXBVV BKSWQ VTBUJ JKBLS QNUVQ JSNQG WKSNS AQYJC USWBG XSANM QNLDQ TGSJW CSWBX MGFGB KGZQM USUQJ JDSQE SBXQG WKQUA MNCSW BGQME MUJQX JSNJD SACNJ DBXJD SJKCG UJDSN SQNSX SKDCU JBNCZ QVJNQ ZSUBX UDQFS UYSQN SMGJC VDSCU TSGJC BGSWQ UYQNJ BXJDS VBGWB GJDSQ JNSUZ SGSCG ASZQM USBXJ DCUEQ YUZDB VQNUN SXSNJ BJDSL SQNUA SJKSS GQGWQ UUDQF SUYSQ NSUVB UJLSQ NUACB ENQYD SNUQJ JSTYJ CGEJB QZZBM GJXBN JDCUY SNCBW DQISN SYBNJ SWTQG LQYBZ NLYDQ VUJBN CSUGC ZDBVQ UNBKS UDQFS UYSQN SUXCN
+UJACB ENQYD SNNSZ BMGJS WQUJN QJXBN WVSES GWJDQ JUDQF SUYSQ NSXVS WJDSJ BKGXB NVBGW BGJBS UZQYS YNBUS ZMJCB GXBNW SSNYB QZDCG EQGBJ DSNSC EDJSS GJDZS GJMNL UJBNL DQUUD QFSUY SQNSU JQNJC GEDCU JDSQJ NCZQV ZQNSS NTCGW CGEJD SDBNU SUBXJ DSQJN SYQJN BGUCG VBGWB GRBDG QMANS LNSYB NJSWJ DQJUD QFSUY SQNSD QWASS GQZBM GJNLU ZDBBV TQUJS NUBTS JKSGJ CSJDZ SGJMN LUZDB VQNUD QISUM EESUJ SWJDQ JUDQF SUYSQ NSTQL DQISA SSGST YVBLS WQUQU ZDBBV TQUJS NALQV SOQGW SNDBE DJBGB XVQGZ QUDCN SQZQJ DBVCZ VQGWB KGSNK
+DBGQT SWQZS NJQCG KCVVC QTUDQ FSUDQ XJSCG DCUKC VVGBS ICWSG ZSUMA UJQGJ CQJSU UMZDU JBNCS UBJDS NJDQG DSQNU QLZBV VSZJS WQXJS NDCUW SQJD
+```
+```
+krypton3@krypton:/krypton/krypton3$ cat found3
+DSNSM YBGVS ENQGW QNBUS KCJDQ ENQIS QGWUJ QJSVL QCNQG WANBM EDJTS JDSAS SJVSX NBTQE VQUUZ QUSCG KDCZD CJKQU SGZVB USWCJ KQUQA SQMJC XMVUZ QNQAQ SMUQG WQJJD QJJCT SMGFG BKGJB GQJMN QVCUJ UBXZB MNUSQ ENSQJ YNCPS CGQUZ CSGJC XCZYB CGJBX ICSKJ DSNSK SNSJK BNBMG WAVQZ FUYBJ UGSQN BGSSO JNSTC JLBXJ DSAQZ FQGWQ VBGEB GSGSQ NJDSB JDSNJ DSUZQ VSUKS NSSOZ SSWCG EVLDQ NWQGW EVBUU LKCJD QVVJD SQYYS QNQGZ SBXAM NGCUD SWEBV WJDSK SCEDJ BXJDS CGUSZ JKQUI SNLNS TQNFQ AVSQG WJQFC GEQVV JDCGE UCGJB ZBGUC WSNQJ
+CBGCZ BMVWD QNWVL AVQTS RMYCJ SNXBN DCUBY CGCBG NSUYS ZJCGE CJ
+```
+
+![krypton31](/assets/images/OverTheWire/krypton31.png)
+
+Also, here are the percentages
+
+```
+41  A 1.30%     ||
+42  B 5.81%     ||||||
+43  C 5.37%     ||||||
+44  D 4.96%     |||||
+45  E 1.51%     ||
+46  F 0.66%     |
+47  G 5.37%     ||||||
+48  H 0.09%     |
+49  I 0.45%     |
+4a  J 7.11%     ||||||||
+4b  K 1.58%     ||
+4c  L 1.42%     ||
+4d  M 2.03%     |||
+4e  N 5.67%     ||||||
+4f  O 0.28%     |
+50  P 0.05%     |
+51  Q 8.04%     |||||||||
+52  R 0.09%     |
+53  S 10.78%    |||||||||||
+54  T 1.77%     ||
+55  U 6.07%     |||||||
+56  V 3.07%     ||||
+57  W 3.05%     ||||
+58  X 1.68%     ||
+59  Y 1.99%     ||
+5a  Z 3.12%     ||||
+```
+
+And this is the Frequency Distribution shown on [Wikipedia](https://en.wikipedia.org/wiki/Frequency_analysis)
+
+![krypton32](/assets/images/OverTheWire/krypton32.png)
+
+Which means:
+```
+S = E
+Q = T
+J = A
+U = O
+B = I
+N = N
+C = S
+G = H
+D = R
+Z = D
+V = L
+W = C
+M = M
+Y = W
+T = F
+X = G
+K = Y
+E = P
+L = B
+F = V
+I = K
+O = J
+H = X
+R = Q
+P = Z
+```
+So far, or cipher looks like this (lowercase is what we can substitute)
+```
+GELLCIHEARELEKELFIUNMTOOGINCSOBNUAE
+```
+This doesn't seem to work as a password however.
+
+After losing some time, I have rearranged the cipher to what I think is correct.
+
+```
+S = E
+Q = Q
+J = T
+U = S
+B = O
+N = R
+C = I
+G = N
+D = H
+Z = C
+V = L
+W = D
+M = U
+Y = P
+T = M
+X = F
+K = W
+E = G
+L = Y
+F = B
+I = K
+O = V
+H = X
+R = Q
+P = J
+```
+
+And, thus, finally, our password
+```
+WELLDONETHELEVELFOURPQSSWORDISBRUTE
+```
+
+## Level 4 ##
+
+```
+This level is a Vigenère Cipher. You have intercepted two longer, english language messages. You also have a key piece of information. You know the key length!
+
+For this exercise, the key length is 6. The password to level five is in the usual place, encrypted with the 6 letter key.
+
+Have fun!
+```
+```
+krypton4@krypton:~$ cd /krypton/krypton4/
+krypton4@krypton:/krypton/krypton4$ ls
+HINT  README  found1  found2  krypton5
+krypton4@krypton:/krypton/krypton4$ 
+HCIKV RJOX
+```
+
+Alright so, since the key length is six, I will call the values as: ```abcdef```
+Out password can be obtained by finding out these values as such:
+```
+p1 = H - a
+p2 = C - b
+p3 = I - c
+p4 = K - d
+p5 = V - e
+p6 = R - f
+p7 = J - a
+p8 = O - b
+p9 = X - c
+```
+
+Where ```pn``` is the n'th letter of our password.
+Knowing these, I inserted the code in a [Vigenere Cipher Decoder](https://www.dcode.fr/vigenere-cipher) which easily deciphered it, by using ```Kasiski``` tests.
+
+Key: ```FREKEY```
+Password: ```RANDOM```
+
+## Level 5 ##
+```
+FA can break a known key length as well. Lets try one last polyalphabetic cipher, but this time the key length is unknown.
+
+Enjoy.
+```
+
+```
+krypton5@krypton:~$ cd /krypton/krypton5/
+krypton5@krypton:/krypton/krypton5$ ls
+README  found1  found2  found3  krypton6
+krypton5@krypton:/krypton/krypton5$ cat krypton6 
+BELOS Z
+```
+
+Using the same decoder as above, I tried increasing the length of the key, until I stumbled upon the password
+```
+RANDOM
+```
+
+
+## Level 6 ##
+Hmm, as we are told, ```The password for level 7 (krypton7) is encrypted with ‘encrypt6’.```
+
+```
+krypton6@krypton:~$ cd /krypton/krypton6/
+krypton6@krypton:/krypton/krypton6$ ls
+HINT1  HINT2  README  encrypt6  keyfile.dat  krypton7  onetime
+krypton6@krypton:/krypton/krypton6$ cat krypton7 
+PNUKLYLWRQKGKBE
+```
+Let's also take a look at the hints
+```
+krypton6@krypton:/krypton/krypton6$ cat HINT1 HINT2
+The 'random' generator has a limited number of bits, and is periodic.
+Entropy analysis and a good look at the bytes in a hex editor will help.
+
+There is a pattern!
+8 bit LFSR
+```
+We are suggested that there might be a repeating pattern.
+Looks like ```encrypt6``` takes the file whose contents to encrypt as the first argument and the file where to store the encrypted contents as the second argument.
+```
+krypton6@krypton:/krypton/krypton6$ python -c 'print "a" * 100' > /tmp/a
+krypton6@krypton:/krypton/krypton6$ ./encrypt6 /tmp/a /tmp/a6
+krypton6@krypton:/krypton/krypton6$ cat /tmp/a6
+EICTDGYIYZKTHNSIRFXYCPFUEOCKRNEICTDGYIYZKTHNSIRFXYCPFUEOCKRNEICTDGYIYZKTHNSIRFXYCPF
+```
+Looks like the pattern ```EICTDGYIYZKTHNSIRFXYCPFUEOCKRN``` is repeating. There is indeed a repeating pattern.
+This means that we could simply subtract from the current cipher the repeating pattern.
+If we do so, we will obtain the following password:
+```
+LFSRISNOTRANDOM
+```
+
+## Conclusion ##
+Now I remember why I don't enjoy Cryptography challenges. While I did use some already available tools, for me the challenges were still hard, or maybe just unpleasant :).
+All in all, and as always, the ```OverTheWire``` team does a wonderful job at posting beginner challenges.

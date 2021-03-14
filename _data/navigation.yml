@@ -6,3 +6,7 @@
   url: tryhackme/index.html
 - name: OverTheWire
   url: overthewire/index.html
+- name: Exploit Education
+  url: exploiteducation/index.html
+- name: ROP Emporium
+  url: ropemporium/index.html

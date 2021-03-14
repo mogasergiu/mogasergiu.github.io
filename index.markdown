@@ -4,7 +4,7 @@ layout: default
 
 <h1> Welcome to my Blog! </h1>
 
-<h3>This is a place where I post writeups to the some of the CTF's and wargames I solve. My favourite challenges are those related to Reverse Engineering and Exploit Development so most of the posts here will revolve around these two topics.</h3>
+<h3>This is a place where I post writeups to some of the CTF's and wargames I solve, as well as some of my personal projects. My favourite challenges are those related to Reverse Engineering and Exploit Development so most of the posts here will revolve around these two topics.</h3>
 <br>
 <br>
 <h1>Latest Posts</h1>

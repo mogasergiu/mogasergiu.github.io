@@ -4,7 +4,7 @@ title: TryHackMe
 permalink: /tryhackme/index.html
 ---
 
-### This page contains all the writeups I've done for the challenges offered by the [TryHackMe](https://tryhackme.com) CTF platform. ###
+### This page contains all of the writeups I've done for the challenges offered by the [TryHackMe](https://tryhackme.com) CTF platform. ###
 <br>
 <br>
 <ul>

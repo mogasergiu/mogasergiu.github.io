@@ -1,7 +1,7 @@
 title: Sergiu's Blog
 email: sergiu.moga@protonmail.com
 description: >-
-  A blog that contains my writeups to various CTF's and wargames, as well as random discussions regarding Computer Science topics.
+  A blog that contains my writeups to various CTF's and wargames.
 baseurl: "" # the subpath of your site, e.g. /blog
 url: "https://mogasergiu.github.io" # the base hostname & protocol for your site, e.g. http://example.com
 github_username:  mogasergiu

